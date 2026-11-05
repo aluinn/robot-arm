@@ -4,7 +4,7 @@ import { ARM, PALETTE } from './config.js';
 import { FINGER_HALF, PALM_HALF } from './arm.js';
 
 const DENSITY = 350;           // kg/m^3 (light wood-like)
-const GRASP_BLEND = 0.14;      // seconds to ease a block to the grip centre
+const GRASP_BLEND = 0.2;       // seconds to ease a block to the grip centre
 
 /* ---------- fixed-seed block layout ---------- */
 
@@ -40,6 +40,23 @@ export function makeBlockSpecs(seed = 7) {
 }
 
 /* ---------- the 24 axis-aligned rotations (for snapping a grasped block) ---------- */
+
+// column vectors of all proper rotations that map the axes onto the axes
+const ROTS = (() => {
+  const out = [];
+  const perms = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+  for (const p of perms) {
+    for (let sg = 0; sg < 8; sg++) {
+      const sign = [sg & 1 ? -1 : 1, sg & 2 ? -1 : 1, sg & 4 ? -1 : 1];
+      const cols = p.map((k, j) => { const v = [0, 0, 0]; v[k] = sign[j]; return v; });
+      const det = new THREE.Matrix4().makeBasis(
+        new THREE.Vector3(...cols[0]), new THREE.Vector3(...cols[1]), new THREE.Vector3(...cols[2])
+      ).determinant();
+      if (det > 0) out.push(cols);
+    }
+  }
+  return out;
+})();
 
 const tmpM = new THREE.Matrix4();
 const tmpV = new THREE.Vector3();
@@ -130,7 +147,32 @@ export class Physics {
   step(dt) {
     this._syncKinematics(dt);
     this._updateGrasp(dt);
+    this._wakeNearTool();
     this.world.step(dt);
+  }
+
+  // cannon-es ignores contacts between a sleeping body and a slow kinematic one, so a gentle
+  // push would pass straight through a resting block. Wake anything the tool is touching.
+  _wakeNearTool() {
+    const movers = [...this.kinFingers, this.kinPalm];
+    if (this.held) movers.push(this.held.block.body);
+    for (const m of movers) m.updateAABB();
+    const pad = 0.012;
+    for (const b of this.blocks) {
+      const body = b.body;
+      if (body.sleepState !== CANNON.Body.SLEEPING) continue;
+      body.updateAABB();
+      for (const m of movers) {
+        if (m === body) continue;
+        const a = m.aabb, c = body.aabb;
+        if (a.lowerBound.x - pad < c.upperBound.x && a.upperBound.x + pad > c.lowerBound.x &&
+            a.lowerBound.y - pad < c.upperBound.y && a.upperBound.y + pad > c.lowerBound.y &&
+            a.lowerBound.z - pad < c.upperBound.z && a.upperBound.z + pad > c.lowerBound.z) {
+          body.wakeUp();
+          break;
+        }
+      }
+    }
   }
 
   /* ---------- kinematic tool bodies ---------- */
@@ -217,25 +259,20 @@ export class Physics {
       const lx = e[12], ly = e[13], lz = e[14];
       if (Math.abs(lx) > 0.05 || Math.abs(lz) > 0.04 || Math.abs(ly) > 0.05) continue;
 
-      // snap block axes to nearest tool axes
+      // pads touch the block when the half gap reaches its actual extent along the finger axis
       const hs = [b.half.x, b.half.y, b.half.z];
-      const used = [false, false, false];
-      const cols = [];
-      let ok = true;
-      for (let j = 0; j < 3; j++) {
-        const c = [e[j * 4], e[j * 4 + 1], e[j * 4 + 2]];
-        let k = 0;
-        for (let m = 1; m < 3; m++) if (Math.abs(c[m]) > Math.abs(c[k])) k = m;
-        if (Math.abs(c[k]) < 0.9 || used[k]) { ok = false; break; }
-        used[k] = true;
-        const v = [0, 0, 0]; v[k] = Math.sign(c[k]);
-        cols.push(v);
+      const ext = Math.abs(e[0]) * hs[0] + Math.abs(e[4]) * hs[1] + Math.abs(e[8]) * hs[2];
+      if (ext > ARM.fingerHalfTravel || g.v > ext + 0.002) continue;
+
+      // nearest axis-aligned orientation relative to the tool (24 candidates)
+      let cols = null, bestScore = -Infinity;
+      for (const R of ROTS) {
+        let sc = 0;
+        for (let j = 0; j < 3; j++) sc += R[j][0] * e[j * 4] + R[j][1] * e[j * 4 + 1] + R[j][2] * e[j * 4 + 2];
+        if (sc > bestScore) { bestScore = sc; cols = R; }
       }
-      if (!ok) continue;
-      // half extent along tool X
       let hw = 0;
       for (let j = 0; j < 3; j++) if (cols[j][0] !== 0) hw = hs[j];
-      if (hw > ARM.fingerHalfTravel || g.v > hw + 0.002) continue;
       const d = Math.abs(lx) + Math.abs(lz) + Math.abs(ly);
       if (!best || d < best.d) best = { b, hw, d, rel, cols, lx, ly, lz };
     }
@@ -246,7 +283,6 @@ export class Physics {
       new THREE.Vector3(...best.cols[1]),
       new THREE.Vector3(...best.cols[2])
     );
-    if (snap.determinant() < 0) return; // degenerate; skip
     const p0 = new THREE.Vector3(), q0 = new THREE.Quaternion();
     best.rel.decompose(p0, q0, new THREE.Vector3());
     const q1 = new THREE.Quaternion().setFromRotationMatrix(snap);
