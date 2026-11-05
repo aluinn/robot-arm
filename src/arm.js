@@ -315,6 +315,52 @@ export class Arm {
     this.grip.t = clamp(half, 0, ARM.fingerHalfTravel);
   }
 
+  /** Exact, JSON-safe controller + joint state. */
+  capture() {
+    const t = this.target.pos, l = this._lastValid.pos;
+    return {
+      q: this.q.map((j) => [j.v, j.vel, j.t]),
+      grip: [this.grip.v, this.grip.vel, this.grip.t, this.grip.min],
+      target: [t.x, t.y, t.z, this.target.yaw],
+      lastValid: [l.x, l.y, l.z],
+      tilt: this._tiltSign || 1,
+      mode: this.mode,
+      fine: this.fine,
+    };
+  }
+
+  restore(s) {
+    s.q.forEach(([v, vel, t], i) => { this.q[i].v = v; this.q[i].vel = vel; this.q[i].t = t; });
+    [this.grip.v, this.grip.vel, this.grip.t, this.grip.min] = s.grip;
+    this.target.pos.set(s.target[0], s.target[1], s.target[2]);
+    this.target.yaw = s.target[3];
+    this._lastValid.pos.set(...s.lastValid);
+    this._tiltSign = s.tilt;
+    this.mode = s.mode;
+    this.fine = s.fine;
+    this._apply();
+    this.group.updateMatrixWorld(true);
+  }
+
+  /** Per-step command: the controller's outputs (joint targets, gripper, target pose). */
+  command() {
+    const t = this.target.pos;
+    return [
+      this.q[0].t, this.q[1].t, this.q[2].t, this.q[3].t, this.q[4].t,
+      this.grip.t, this.fine ? 1 : 0, t.x, t.y, t.z, this.target.yaw, this.mode === 'joints' ? 1 : 0,
+    ];
+  }
+
+  applyCommand(c) {
+    for (let i = 0; i < 5; i++) this.q[i].t = c[i];
+    this.grip.t = c[5];
+    this.fine = c[6] === 1;
+    this.target.pos.set(c[7], c[8], c[9]);
+    this.target.yaw = c[10];
+    this._lastValid.pos.set(c[7], c[8], c[9]);
+    this.mode = c[11] === 1 ? 'joints' : 'cartesian';
+  }
+
   /* ---------- dynamics ---------- */
 
   step(dt) {

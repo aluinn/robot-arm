@@ -66,8 +66,30 @@ const tmpQ2 = new THREE.Quaternion();
 export class Physics {
   constructor(arm, specs) {
     this.arm = arm;
-    this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.81, 0) });
-    const w = this.world;
+    this.specs = specs;
+    this.blocks = specs.map((s) => ({
+      spec: s,
+      half: new CANNON.Vec3(s.size[0] / 2, s.size[1] / 2, s.size[2] / 2),
+      mass: DENSITY * s.size[0] * s.size[1] * s.size[2],
+      body: null, mesh: null, blob: null,
+    }));
+    this.held = null;
+    this.rebuild(null);
+  }
+
+  /**
+   * Build a brand-new physics world, optionally from a captured block state.
+   * Starting every run (live recording and replay alike) from a fresh world with the same
+   * body ids and no leftover broadphase/contact history is what makes replays exact.
+   */
+  rebuild(state) {
+    CANNON.Body.idCounter = 0;
+    CANNON.Shape.idCounter = 0;
+    CANNON.Material.idCounter = 0;
+    this.held = null;
+    this._kinFirst = true;
+
+    const w = this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.81, 0) });
     w.broadphase = new CANNON.SAPBroadphase(w);
     w.allowSleep = true;
     w.solver.iterations = 30;
@@ -76,7 +98,6 @@ export class Physics {
     const mBlock = new CANNON.Material('block');
     const mFloor = new CANNON.Material('floor');
     const mTool = new CANNON.Material('tool');
-    this.mBlock = mBlock;
     const contact = (a, b, friction) =>
       w.addContactMaterial(new CANNON.ContactMaterial(a, b, {
         friction, restitution: 0.0,
@@ -109,40 +130,50 @@ export class Physics {
     };
     this.kinFingers = [kin(FINGER_HALF), kin(FINGER_HALF)];
     this.kinPalm = kin(PALM_HALF);
-    this._kinFirst = true;
 
-    // Blocks
-    this.specs = specs;
-    this.blocks = specs.map((s) => {
-      const half = new CANNON.Vec3(s.size[0] / 2, s.size[1] / 2, s.size[2] / 2);
-      const mass = DENSITY * s.size[0] * s.size[1] * s.size[2];
+    // Blocks (state === null -> the default layout)
+    this.blocks.forEach((b, i) => {
+      const s = b.spec;
       const body = new CANNON.Body({
-        mass, material: mBlock, shape: new CANNON.Box(half),
+        mass: b.mass, material: mBlock, shape: new CANNON.Box(b.half),
         linearDamping: 0.03, angularDamping: 0.25,
         allowSleep: true, sleepSpeedLimit: 0.12, sleepTimeLimit: 0.4,
       });
+      const st = state && state[i];
+      if (st) {
+        body.position.set(...st.p);
+        body.quaternion.set(...st.q);
+        body.velocity.set(...st.v);
+        body.angularVelocity.set(...st.w);
+      } else {
+        body.position.set(s.x, s.size[1] / 2 + 0.0008, s.z);
+        body.quaternion.setFromEuler(0, s.yaw, 0);
+      }
+      body.previousPosition.copy(body.position);
+      body.interpolatedPosition.copy(body.position);
       w.addBody(body);
-      return { body, half, mass, spec: s, mesh: null, blob: null };
-    });
-    this.held = null;
-    this.reset();
-  }
-
-  reset() {
-    if (this.held) this._release();
-    this.blocks.forEach((b) => {
-      const s = b.spec;
-      b.body.type = CANNON.Body.DYNAMIC;
-      b.body.mass = b.mass;
-      b.body.updateMassProperties();
-      b.body.position.set(s.x, s.size[1] / 2 + 0.0008, s.z);
-      b.body.quaternion.setFromEuler(0, s.yaw, 0);
-      b.body.velocity.setZero();
-      b.body.angularVelocity.setZero();
-      b.body.wakeUp();
+      if (st && st.s === CANNON.Body.SLEEPING) body.sleep();
+      b.body = body;
     });
     this.arm.grip.min = 0;
   }
+
+  /** Exact, JSON-safe state of every block. */
+  capture() {
+    return this.blocks.map((b) => {
+      const o = b.body;
+      return {
+        p: [o.position.x, o.position.y, o.position.z],
+        q: [o.quaternion.x, o.quaternion.y, o.quaternion.z, o.quaternion.w],
+        v: [o.velocity.x, o.velocity.y, o.velocity.z],
+        w: [o.angularVelocity.x, o.angularVelocity.y, o.angularVelocity.z],
+        s: o.sleepState,
+      };
+    });
+  }
+
+  /** Back to the default layout. */
+  reset() { this.rebuild(null); }
 
   step(dt) {
     this._syncKinematics(dt);

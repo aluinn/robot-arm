@@ -29,6 +29,13 @@ export class Input {
     switch (c) {
       case 'Space': this.toggleGripper(); break;
       case 'KeyM': this.actions.toggleMode(); break;
+      case 'KeyC': this.actions.record(); break;
+      case 'KeyP': this.actions.autopilot(); break;
+      case 'KeyT': this.actions.toggleTrail(); break;
+      case 'Digit1': this.actions.setSpeed(0.5); break;
+      case 'Digit2': this.actions.setSpeed(1); break;
+      case 'Digit3': this.actions.setSpeed(2); break;
+      case 'Digit4': this.actions.setSpeed(4); break;
       case 'KeyH': this.actions.toggleClean(); break;
       case 'KeyO': this.actions.toggleOrbit(); break;
       case 'KeyX': this.actions.reset(); break;
@@ -38,6 +45,7 @@ export class Input {
   }
 
   toggleGripper(open = !this.gripOpen) {
+    if (this.actions.isLocked()) return;
     this.gripOpen = open;
     this.arm.setGripperTarget(open ? ARM.fingerHalfTravel : 0);
   }
@@ -48,6 +56,7 @@ export class Input {
 
   update(dt) {
     const arm = this.arm;
+    if (this.actions.isLocked()) return;
     arm.fine = this.fine;
     if (arm.mode !== 'cartesian') return;
     const k = this.fine ? FINE : 1;
