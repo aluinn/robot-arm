@@ -1,5 +1,6 @@
 import { ARM, JOINTS, REPLAY_SPEEDS as SPEEDS } from './config.js';
 import { SHAPES } from './challenge.js';
+import { STRUCTURES } from './structures.js';
 
 const DEG = 180 / Math.PI;
 const GRIP_MAX_MM = ARM.fingerHalfTravel * 2000;
@@ -39,14 +40,17 @@ export class UI {
     this._buildCameraSeg(col);
     this._buildRecorder(col);
     this._buildChallenge(col);
+    this._buildAutoBuild(col);
     this._buildHint();
     this._buildSuccess();
 
     // Start with the cards that fit: everything folded on phones, the challenge folded on short screens.
     const phone = window.matchMedia('(max-width: 760px)').matches;
     const short = window.innerHeight < 800;
-    this.recCard.set(!phone);
-    this.chalCard.set(!phone && !short);
+    const tall = window.innerHeight >= 900;
+    this.recCard.set(!phone && window.innerHeight >= 520);
+    this.chalCard.set(!phone && tall);
+    this.buildCard.set(!phone && tall);
     this.setMode('cartesian');
   }
 
@@ -254,6 +258,34 @@ export class UI {
     col.append(card.root);
   }
 
+  _buildAutoBuild(col) {
+    const { actions } = this;
+    const card = this.buildCard = this._card('build', 'Auto-Build');
+    const body = card.body;
+
+    this.buildSel = el('select', 'sel');
+    this.buildSel.innerHTML = '<option value="">Choose a structure\u2026</option>' +
+      Object.entries(STRUCTURES).map(([k, s]) => `<option value="${k}">${s.label}</option>`).join('');
+    this.buildSel.onchange = () => { actions.selectStructure(this.buildSel.value); this.buildSel.blur(); };
+
+    const btns = el('div', 'chal-btns');
+    this.btnBuild = el('button', 'rb rb-go', 'Auto-Build');
+    this.btnBuild.onclick = () => { actions.startBuild(); this.btnBuild.blur(); };
+    this.btnBuildStop = el('button', 'rb', 'Cancel <kbd class="esc">Esc</kbd>');
+    this.btnBuildStop.onclick = () => { actions.cancelBuild(); this.btnBuildStop.blur(); };
+    btns.append(this.btnBuild, this.btnBuildStop);
+
+    this.buildProg = el('div', 'bprog', '<i></i>');
+    this.buildBar = this.buildProg.firstChild;
+    this.buildLine = el('div', 'bline', '<b></b><span></span>');
+    this.buildTitle = this.buildLine.querySelector('b');
+    this.buildPhase = this.buildLine.querySelector('span');
+    this.buildNote = el('div', 'note');
+
+    body.append(this.buildSel, btns, this.buildProg, this.buildLine, this.buildNote);
+    col.append(card.root);
+  }
+
   _buildHint() {
     const hint = el('aside', 'glass hint');
     hint.innerHTML = `
@@ -281,6 +313,7 @@ export class UI {
         <div><kbd>X</kbd><span>Reset scene</span></div>
         <div><kbd>T</kbd><span>Replay trail</span></div>
         <div><kbd>H</kbd><span>Clean mode</span></div>
+        <div><kbd>Esc</kbd><span>Cancel Auto-Build</span></div>
       </div>`;
     this.root.append(hint);
     this.hint = hint;
@@ -326,6 +359,9 @@ export class UI {
 
   setShape(key) { this.shape = key; this.shapeBtns.forEach((x) => x.b.classList.toggle('on', x.key === key)); }
 
+  setBuildKey(key) { this.buildSel.value = key || ''; }
+  buildMsg(text) { this.buildNote.textContent = text; this.buildNote.className = 'note warn'; }
+
   chalMsg(text) { this.chalNote.textContent = text; }
 
   showSuccess({ label, time, best, newBest }) {
@@ -338,7 +374,7 @@ export class UI {
 
   /* ---------- per frame ---------- */
 
-  update(stack, chal) {
+  update(stack, chal, build) {
     const arm = this.arm, joints = arm.mode === 'joints';
 
     this.rows.forEach((r, i) => {
@@ -363,6 +399,7 @@ export class UI {
 
     this._updateRecorder();
     this._updateChallenge(chal);
+    this._updateBuild(build);
   }
 
   _updateRecorder() {
@@ -396,7 +433,35 @@ export class UI {
     this.speedBtns.forEach(({ v, b }) => setClass(b, 'on', v === r.speed));
     this.btnExport.disabled = !r.hasData;
     this.btnClear.disabled = !r.hasData || rec || rep;
-    this.panel.classList.toggle('locked', rep);
+  }
+
+  _updateBuild(a) {
+    const running = a.running, rep = this.rec.replaying, has = !!this.buildSel.value;
+    this.btnBuild.disabled = running || !has || rep;
+    this.btnBuildStop.disabled = !running;
+    this.buildSel.disabled = running;
+    const n = a.total, k = a.index;
+    let title = '', phase = '', frac = 0, summary = '';
+    if (running) {
+      title = `Block ${Math.min(n, k + 1)} of ${n}`; phase = a.phase;
+      frac = a.filled.filter(Boolean).length / Math.max(1, n);
+      summary = `${Math.min(n, k + 1)}/${n}`;
+    } else if (a.state === 'done') {
+      title = 'Complete'; phase = `built in ${fmtTime(a.time)}`; frac = 1; summary = 'Done';
+    } else if (a.state === 'failed' || a.state === 'cancelled') {
+      title = a.state === 'failed' ? 'Stopped' : 'Cancelled'; phase = a.message;
+      frac = a.filled.filter(Boolean).length / Math.max(1, n); summary = a.state === 'failed' ? 'Stopped' : '';
+    }
+    setText(this.buildTitle, title);
+    setText(this.buildPhase, phase);
+    setText(this.buildCard.summary, summary);
+    const w = `${(frac * 100).toFixed(0)}%`;
+    if (this.buildBar._w !== w) { this.buildBar._w = w; this.buildBar.style.width = w; }
+    setClass(this.buildCard.root, 'running', running);
+    setClass(this.buildCard.root, 'complete', a.state === 'done');
+    setClass(this.buildNote, 'err', a.state === 'failed');
+    if (a.state === 'failed') setText(this.buildNote, a.message);
+    this.panel.classList.toggle('locked', rep || running);
   }
 
   _updateChallenge(c) {

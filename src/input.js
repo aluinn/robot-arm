@@ -41,6 +41,7 @@ export class Input {
       case 'BracketLeft': this.actions.cycleSpeed(-1); break;
       case 'BracketRight': this.actions.cycleSpeed(1); break;
       case 'KeyK': this.actions.toggleSound(); break;
+      case 'Escape': this.actions.cancelBuild(); break;
       case 'KeyH': this.actions.toggleClean(); break;
       case 'KeyO': this.actions.toggleOrbit(); break;
       case 'KeyX': this.actions.reset(); break;

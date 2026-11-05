@@ -78,9 +78,15 @@ const tmpA = new THREE.Vector3();
 const tmpB = new THREE.Vector3();
 const tmpC = new THREE.Vector3();
 
-const SETTLE_TIME = 0.4;       // seconds of extra damping after a release
-const SETTLE_LIN = 0.5, SETTLE_ANG = 0.9;
+// Blocks that are nearly at rest get heavy damping so residual rocking (a tall stack after a
+// placement) dies out and they fall asleep. Fast-moving blocks keep the light base damping.
+const REST_LIN = 0.5, REST_ANG = 0.9;
 const BASE_LIN = 0.03, BASE_ANG = 0.25;
+const REST_SPEED = 0.15, REST_SPIN = 1.5;      // m/s, rad/s
+// A block that is resting on something and calm for this long is put to sleep. The solver's own
+// sleep test never triggers for a tall stack because of tiny high-frequency contact jitter, and an
+// awake stack slowly creeps and topples.
+const CALM_SPEED = 0.1, CALM_SPIN = 1.0, CALM_STEPS = 30;
 
 export class Physics {
   constructor(arm, specs) {
@@ -108,6 +114,7 @@ export class Physics {
     CANNON.Material.idCounter = 0;
     this.held = null;
     this._kinFirst = true;
+    this._touched = new Set();
 
     const w = this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.81, 0) });
     w.broadphase = new CANNON.SAPBroadphase(w);
@@ -176,7 +183,7 @@ export class Physics {
       w.addBody(body);
       if (st && st.s === CANNON.Body.SLEEPING) body.sleep();
       b.body = body;
-      b.settle = 0;
+      b.calm = 0;
     });
     this.arm.grip.min = 0;
   }
@@ -200,19 +207,25 @@ export class Physics {
     this._updateGrasp(dt);
     this._wakeNearTool();
     this.world.step(dt);
-    this._updateSettle(dt);
+    this._updateRest();
     this._updateToolState();
   }
 
-  // Briefly extra-damped after a release so a placed block lands softly instead of bouncing.
-  _updateSettle(dt) {
+  _updateRest() {
+    const touched = this._touched;
+    touched.clear();
+    const cs = this.world.contacts;
+    for (let i = 0; i < cs.length; i++) { touched.add(cs[i].bi); touched.add(cs[i].bj); }
     for (const b of this.blocks) {
-      if (b.settle <= 0) continue;
-      b.settle -= dt;
-      if (b.settle <= 0) {
-        b.body.linearDamping = BASE_LIN;
-        b.body.angularDamping = BASE_ANG;
-      }
+      const o = b.body;
+      if (o.type !== CANNON.Body.DYNAMIC || o.sleepState === CANNON.Body.SLEEPING) { b.calm = 0; continue; }
+      const v2 = o.velocity.lengthSquared(), w2 = o.angularVelocity.lengthSquared();
+      const resting = v2 < REST_SPEED * REST_SPEED && w2 < REST_SPIN * REST_SPIN;
+      o.linearDamping = resting ? REST_LIN : BASE_LIN;
+      o.angularDamping = resting ? REST_ANG : BASE_ANG;
+      const calm = v2 < CALM_SPEED * CALM_SPEED && w2 < CALM_SPIN * CALM_SPIN && touched.has(o);
+      b.calm = calm ? b.calm + 1 : 0;
+      if (b.calm >= CALM_STEPS) { o.sleep(); b.calm = 0; }
     }
   }
 
@@ -226,7 +239,7 @@ export class Physics {
         if (cs[i].bi.isTool || cs[i].bj.isTool) { busy = true; break; }
       }
     }
-    arm.breathT = busy ? 0 : 1;
+    arm.breathT = busy || arm.precise ? 0 : 1;
   }
 
   // cannon-es ignores contacts between a sleeping body and a slow kinematic one, so a gentle
@@ -376,9 +389,6 @@ export class Physics {
     const v = body.velocity;
     const sp = v.length();
     if (sp > 1.5) v.scale(1.5 / sp, v);
-    body.linearDamping = SETTLE_LIN;
-    body.angularDamping = SETTLE_ANG;
-    b.settle = SETTLE_TIME;
     this.held = null;
     if (this.onRelease) this.onRelease(b);
   }

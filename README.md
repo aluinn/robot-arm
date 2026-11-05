@@ -23,6 +23,7 @@ Then open the printed local URL. There is no build step; Three.js and cannon-es 
 | `O` | Toggle slow auto-orbit |
 | `X` | Reset the whole scene (arm and blocks) |
 | `H` | Clean mode: hide all UI |
+| `Esc` | Cancel Auto-Build |
 | `C` | Start / stop recording |
 | `P` | Autopilot (replay the recording); pause / resume while replaying |
 | `[` / `]` | Slower / faster replay (0.5×, 1×, 2×, 4×) |
@@ -47,6 +48,27 @@ In **Joints** mode the panel sliders drive each joint and the gripper directly.
 ### Challenge
 
 Pick **Tower of 3** or **Pyramid** and press **Start**. The scene resets, a translucent ghost shows the target, and the timer runs. Each ghost slot turns green when a matching block sits in it (within about 35 mm, upright and at rest). Hold the full shape for a moment and you get the success card with your time. Best times are remembered. **Reset scene** during a challenge restarts it. Challenges can't be started while recording or replaying.
+
+### Auto-Build
+
+Unlike Autopilot (which replays a recording), Auto-Build **plans and carries out a task itself** from wherever the blocks currently are.
+
+Pick a structure in the **Auto-Build** card: *Tower (all 6)*, *Pyramid (3-2-1)*, *Wall (3 × 2)* or *Staircase (1-2-3)*. A translucent ghost of it appears at the build site, so you can see the target. Press **Auto-Build** to start; the arm waits a moment on the ghost, then builds from the bottom layer up. Progress shows as "Block 3 of 6" with the current step, and slots turn green as they fill. **Esc** or **Cancel** stops it at any time (the arm freezes where it is; if it is holding a block, press `Space` to set it down).
+
+For every block it:
+
+1. moves above it at a height that clears everything on the way (travelling in an arc around the base, with smooth ease-in/ease-out motion),
+2. descends slowly and pauses, closes the gripper and checks that the block really is held (retrying up to 2 more times if not),
+3. lifts, carries it above the target, descends gently, pauses, opens and backs off,
+4. waits for the block to settle and checks it against the target (within about 12 mm). If it is off, it picks the block up again and re-places it.
+
+It works from any layout, including one you rearranged by hand:
+
+- a block already in its target position is left alone;
+- blocks sitting on the build site, blocks stacked on top of the one it needs, and blocks that would stop the gripper fitting are moved aside first, to a free spot on the table;
+- the gripper rotates to the orientation that fits between neighbours, and picks whichever blocks are the right size.
+
+It uses the arm only through the same inverse kinematics as the keyboard, and the blocks are only ever moved by the gripper (nothing is teleported). Keyboard control is locked while it runs. Because it is just another controller, a build can be recorded and replayed. Limits: blocks need to be upright (a block lying on its side is not used) and within the arm's reach, and a tall pile you built by hand elsewhere is taken apart top-first as needed.
 
 ### Record and Autopilot
 
@@ -93,6 +115,9 @@ src/arm.js        arm model, IK, joint dynamics
 src/physics.js    physics world, blocks, grasping, highlight query
 src/stacks.js     tower height and stacked-block detection
 src/challenge.js  ghost targets, timer, success detection
+src/autobuild.js  Auto-Build planner and executor
+src/structures.js Auto-Build target structures
+src/ghost.js      translucent target renderer
 src/audio.js      synthesized sounds
 src/input.js      keyboard handling
 src/ui.js         panels, toolbar, cards, hints

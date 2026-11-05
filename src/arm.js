@@ -107,10 +107,13 @@ export class Arm {
     this.grip = { v: ARM.fingerHalfTravel, vel: 0, t: ARM.fingerHalfTravel, min: 0 };
     this.mode = 'cartesian';
     this.fine = false;
+    this.precise = false;    // set by Auto-Build: no idle sway while placing
     this.clock = 0;          // sim time, drives the idle breathing
     this.breathF = 1;        // breathing amount (fades out while working near blocks)
     this.breathT = 1;
     this._b = new Float64Array(4);
+    this._pose = new THREE.Vector3();
+    this._probe = new THREE.Vector3();
     this.target = { pos: new THREE.Vector3(0.0, 0.3, 0.5), yaw: 0 };
     this._lastValid = { pos: this.target.pos.clone() };
 
@@ -221,7 +224,7 @@ export class Arm {
   /* ---------- kinematics ---------- */
 
   // Returns [yaw, shoulder, elbow, wrist, roll] or null if unreachable / out of limits.
-  solveIK(pos, yaw, prevRoll, maxRollJump = Infinity) {
+  solveIK(pos, yaw, prevRoll, maxRollJump = Infinity, remember = true) {
     const r = Math.hypot(pos.x, pos.z);
     if (r < 0.14 || pos.y < ARM.minTcpY - 1e-6) return null;
     const q0 = Math.atan2(pos.x, pos.z);
@@ -258,7 +261,7 @@ export class Arm {
       if (q1 < lim[1].min || q1 > lim[1].max) continue;
       if (q2 < lim[2].min || q2 > lim[2].max) continue;
       if (q3 < lim[3].min || q3 > lim[3].max) continue;
-      if (dphi !== 0) this._tiltSign = Math.sign(dphi);
+      if (remember && dphi !== 0) this._tiltSign = Math.sign(dphi);
       return [q0, q1, q2, q3, roll];
     }
     return null;
@@ -358,6 +361,7 @@ export class Arm {
       tilt: this._tiltSign || 1,
       mode: this.mode,
       fine: this.fine,
+      precise: this.precise,
       breath: [this.clock, this.breathF, this.breathT],
     };
   }
@@ -371,6 +375,7 @@ export class Arm {
     this._tiltSign = s.tilt;
     this.mode = s.mode;
     this.fine = s.fine;
+    this.precise = s.precise;
     [this.clock, this.breathF, this.breathT] = s.breath;
     this._apply(ZERO4);
     this.group.updateMatrixWorld(true);
@@ -382,6 +387,7 @@ export class Arm {
     return [
       this.q[0].t, this.q[1].t, this.q[2].t, this.q[3].t, this.q[4].t,
       this.grip.t, this.fine ? 1 : 0, t.x, t.y, t.z, this.target.yaw, this.mode === 'joints' ? 1 : 0,
+      this.precise ? 1 : 0,
     ];
   }
 
@@ -393,6 +399,21 @@ export class Arm {
     this.target.yaw = c[10];
     this._lastValid.pos.set(c[7], c[8], c[9]);
     this.mode = c[11] === 1 ? 'joints' : 'cartesian';
+    this.precise = c[12] === 1;
+  }
+
+  /** Absolute Cartesian target through the same IK as the keyboard. False if out of reach. */
+  setTargetPose(x, y, z, yaw) {
+    const p = this._pose.set(x, Math.max(y, ARM.minTcpY), z);
+    const sol = this.solveIK(p, yaw, this.q[4].t, 0.6);
+    if (!sol) return false;
+    this._commit(p, yaw, sol);
+    return true;
+  }
+
+  /** Is this TCP position reachable (tool down, any wrist roll)? Does not touch controller state. */
+  canReach(x, y, z) {
+    return !!this.solveIK(this._probe.set(x, Math.max(y, ARM.minTcpY), z), Math.atan2(x, z), 0, Infinity, false);
   }
 
   /* ---------- dynamics ---------- */

@@ -11,10 +11,10 @@
 import { PHYS } from './config.js';
 
 // Bump whenever the arm/physics behaviour changes: older recordings would no longer replay exactly.
-const SIM_VERSION = 2;
+const SIM_VERSION = 3;
 export const MAX_STEPS = 36000;            // 5 minutes at 120 Hz
 const STORAGE_KEY = 'robotarm.recording.v1';
-const CMD_LEN = 12;
+const CMD_LEN = 13;
 
 export function captureScene(arm, physics) {
   return { arm: arm.capture(), blocks: physics.capture() };
@@ -192,13 +192,13 @@ function validate(d) {
   const a = s.arm;
   if (!a || !Array.isArray(a.q) || a.q.length !== 5 || !a.q.every((j) => numArr(j, 3)) ||
       !numArr(a.grip, 4) || !numArr(a.breath, 3) || !numArr(a.target, 4) || !numArr(a.lastValid, 3) || !isNum(a.tilt) ||
-      !['cartesian', 'joints'].includes(a.mode) || typeof a.fine !== 'boolean') return 'invalid arm snapshot';
+      !['cartesian', 'joints'].includes(a.mode) || typeof a.fine !== 'boolean' || typeof a.precise !== 'boolean') return 'invalid arm snapshot';
   if (!validBlocks(d.final)) return 'invalid final state';
   if (!Array.isArray(d.events) || d.events.length < 1 || d.events.length > MAX_STEPS) return 'invalid events';
   let prev = -1;
   for (const e of d.events) {
     if (!numArr(e, CMD_LEN + 1) || !Number.isInteger(e[0]) || e[0] <= prev || e[0] >= d.steps) return 'invalid events';
-    if ((e[7] !== 0 && e[7] !== 1) || (e[12] !== 0 && e[12] !== 1)) return 'invalid events';
+    if ((e[7] !== 0 && e[7] !== 1) || (e[12] !== 0 && e[12] !== 1) || (e[13] !== 0 && e[13] !== 1)) return 'invalid events';
     prev = e[0];
   }
   if (d.events[0][0] !== 0) return 'invalid events';

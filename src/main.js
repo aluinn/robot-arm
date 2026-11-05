@@ -8,6 +8,9 @@ import { UI } from './ui.js';
 import { Sound } from './audio.js';
 import { analyzeStacks } from './stacks.js';
 import { Challenge } from './challenge.js';
+import { AutoBuild } from './autobuild.js';
+import { Ghost } from './ghost.js';
+import { STRUCTURES, SITE } from './structures.js';
 import { Recorder, captureScene, restoreScene, MAX_STEPS } from './recorder.js';
 import { PHYS, PALETTE, ARM, REPLAY_SPEEDS } from './config.js';
 
@@ -105,6 +108,9 @@ function syncAfterRestore() {
 // ----- sound, challenge -----
 const sound = new Sound();
 const challenge = new Challenge(scene);
+const build = new AutoBuild(arm, physics);
+const buildGhost = new Ghost(scene);
+let buildKey = null;
 let muted = false;   // true while scrubbing, so fast-forwarded events stay silent
 physics.onGrasp = (b) => { b.flash = 1; if (!muted) sound.grip(); };
 physics.onRelease = () => { if (!muted) sound.place(); };
@@ -112,10 +118,10 @@ rig.onChange = (name) => ui.setPreset(name);
 
 // ----- UI + input -----
 const actions = {
-  isLocked: () => rec.replaying,
-  setMode(mode) { if (rec.replaying) return; arm.setMode(mode); ui.setMode(mode); },
+  isLocked: () => rec.replaying || build.running,
+  setMode(mode) { if (actions.isLocked()) return; arm.setMode(mode); ui.setMode(mode); },
   toggleMode() { actions.setMode(arm.mode === 'cartesian' ? 'joints' : 'cartesian'); },
-  setGripper(half) { if (rec.replaying) return; arm.setGripperTarget(half); input.gripOpen = half > ARM.fingerHalfTravel * 0.5; },
+  setGripper(half) { if (actions.isLocked()) return; arm.setGripperTarget(half); input.gripOpen = half > ARM.fingerHalfTravel * 0.5; },
   toggleClean() { clean = !clean; ui.setClean(clean); },
   toggleOrbit() { controls.autoRotate = !controls.autoRotate; ui.setOrbit(controls.autoRotate); },
   toggleHint() { hintOn = !hintOn; ui.setHint(hintOn); },
@@ -130,6 +136,8 @@ const actions = {
 
   startChallenge(key) {
     if (rec.recording || rec.replaying) { ui.chalMsg('Stop recording / replay first'); return; }
+    if (build.running) { ui.chalMsg('Cancel Auto-Build first (Esc)'); return; }
+    actions.clearBuild();
     ui.setShape(key);
     actions.reset();                // fresh blocks, then the clock starts
     challenge.start(key);
@@ -141,6 +149,7 @@ const actions = {
 
   // Reset the whole scene (arm and blocks) to the default start.
   reset() {
+    build.cancel('Auto-Build stopped by reset');
     if (rec.recording) { rec.discard(); ui.notify('Recording discarded by reset', 'warn'); }
     if (rec.replaying) rec.stopReplay();
     restoreScene(arm, physics, home);
@@ -152,6 +161,7 @@ const actions = {
 
   record() {
     if (rec.replaying) return;
+    if (build.running) { ui.notify('Cancel Auto-Build first (Esc)', 'warn'); return; }
     if (rec.recording) { stopRecording(); return; }
     if (physics.held) { ui.notify('Release the block before recording', 'warn'); return; }
     // Rebuild the world from the snapshot so the live run starts exactly as a replay will.
@@ -164,6 +174,7 @@ const actions = {
 
   autopilot() {
     if (rec.recording) return;
+    if (build.running) { ui.notify('Cancel Auto-Build first (Esc)', 'warn'); return; }
     if (rec.replaying) { rec.paused = !rec.paused; return; }
     if (!rec.hasData) return;
     startReplay(false);
@@ -176,6 +187,30 @@ const actions = {
     rec.paused = true;
     rec.seekTarget = Math.max(0, Math.min(rec.totalSteps, step));
   },
+
+  /* ---- Auto-Build ---- */
+  selectStructure(key) {
+    if (build.running) return;
+    if (!STRUCTURES[key]) { buildKey = null; buildGhost.hide(); return; }
+    if (challenge.active) actions.cancelChallenge();
+    buildKey = key;
+    build.state = 'idle'; build.message = '';
+    buildGhost.show(STRUCTURES[key].slots, SITE);       // show the target first
+    ui.setBuildKey(key);
+  },
+  startBuild() {
+    if (!buildKey || build.running) return;
+    if (rec.replaying) { ui.buildMsg('Stop the replay first'); return; }
+    if (challenge.active) actions.cancelChallenge();
+    if (!buildGhost.visible) buildGhost.show(STRUCTURES[buildKey].slots, SITE);
+    for (let i = 0; i < buildGhost.slots.length; i++) buildGhost.setMatched(i, false);
+    const err = build.start(buildKey);
+    if (err) { ui.buildMsg(err); return; }
+    ui.buildMsg('');
+    ui.buildCard.set(true);
+  },
+  cancelBuild() { if (build.running) build.cancel(); },
+  clearBuild() { if (build.running) return; buildGhost.hide(); buildKey = null; build.state = 'idle'; build.message = ''; ui.setBuildKey(''); },
 
   exportJSON() {
     if (!rec.hasData) return;
@@ -201,6 +236,7 @@ const actions = {
 };
 
 function startReplay(paused) {
+  build.cancel();
   restoreScene(arm, physics, rec.data.snapshot);
   rec.beginReplay(paused);
   trailClear();
@@ -235,7 +271,7 @@ ui.setHint(true);
 // No keyboard on touch devices: start with the slider panel driving the arm.
 if (window.matchMedia('(pointer: coarse)').matches) actions.setMode('joints');
 
-if (new URLSearchParams(location.search).has('debug')) window.__app = { renderer, arm, physics, input, camera, controls, scene, THREE, rec, actions, challenge, sound, rig, analyzeStacks, simStep: () => simStep(), restoreScene, captureScene, home };
+if (new URLSearchParams(location.search).has('debug')) window.__app = { structures: STRUCTURES, site: SITE, build, buildGhost, renderer, arm, physics, input, camera, controls, scene, THREE, rec, actions, challenge, sound, rig, analyzeStacks, simStep: () => simStep(), restoreScene, captureScene, home };
 
 // Keep the arm centred in the free area between the panels (matters on portrait screens).
 function layoutView() {
@@ -250,6 +286,15 @@ layoutView();
 // ----- loop -----
 const clock = new THREE.Clock();
 let acc = 0;
+
+// Ghost of the Auto-Build target: slots turn green as the structure fills in.
+function updateBuildGhost() {
+  if (!buildGhost.visible) return;
+  if (build.state !== 'idle' && build.filled.length === buildGhost.slots.length) {
+    build.filled.forEach((f, i) => buildGhost.setMatched(i, f));
+  }
+  buildGhost.animate(clock.elapsedTime, build.state === 'done');
+}
 
 // Highlight what a grab would pick up: soft outline when near, strong when inside the grasp zone,
 // a brief bright pulse at the moment of grip.
@@ -294,6 +339,7 @@ function simStep() {
     rec.applyReplay(arm);
   } else {
     input.update(PHYS.step);
+    build.update();
     if (rec.recording) rec.sample(arm);
     challenge.tick(PHYS.step);
   }
@@ -351,11 +397,12 @@ function frame() {
     sound.success();
   }
   challenge.animate(clock.elapsedTime);
+  updateBuildGhost();
 
   syncVisuals();
   updateHighlights(dt);
   updateMarker();
-  ui.update(analyzeStacks(physics.blocks, physics.held), challenge);
+  ui.update(analyzeStacks(physics.blocks, physics.held), challenge, build);
   controls.update();
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
