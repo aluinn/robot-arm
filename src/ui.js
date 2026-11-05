@@ -43,6 +43,7 @@ export class UI {
     this.btnOrbit = this._tool(bar, 'Orbit', 'O', actions.toggleOrbit);
     this._tool(bar, 'Reset', 'X', actions.reset);
     this.btnHint = this._tool(bar, 'Keys', '/', actions.toggleHint);
+    this.btnHint.classList.add('keys');
     this._tool(bar, 'Clean', 'H', actions.toggleClean);
     root.append(bar);
     this.bar = bar;

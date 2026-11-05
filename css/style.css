@@ -58,5 +58,16 @@ kbd { font: 10px/1 ui-monospace, "SF Mono", Menlo, monospace; color: var(--ink);
 
 @media (max-width: 760px) {
   .hint { display: none; }
-  .panel { width: 200px; }
+  .panel { width: min(232px, calc(100vw - 32px)); padding: 8px; }
+  .sliders { gap: 4px; margin-top: 8px; }
+  .bar { top: auto; bottom: calc(12px + env(safe-area-inset-bottom)); right: auto; left: 50%; translate: -50% 0; }
+  .tool kbd { display: none; }
+  .tool.keys { display: none; }
+}
+@media (max-height: 520px) {
+  .hint { display: none; }
+  .panel { width: 280px; padding: 8px; }
+  .sliders { grid-template-columns: 1fr 1fr; gap: 4px 14px; margin-top: 8px; }
+  .tcp { margin-top: 6px; padding-top: 6px; }
+  .bar { top: 12px; }
 }

@@ -7,7 +7,7 @@ export const ARM = {
   L2: 0.46,          // elbow -> wrist pitch axis
   tcp: 0.245,        // wrist pitch axis -> tool centre point (between finger pads)
   fingerHalfTravel: 0.075, // max half gap between pads
-  minTcpY: 0.04,     // keeps fingertips off the floor
+  minTcpY: 0.045,     // keeps fingertips off the floor
 };
 
 // name, min, max (radians), start

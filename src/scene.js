@@ -3,6 +3,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { PALETTE } from './config.js';
 
+const BASE_FOV = 36;
+
 export function createScene(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -55,7 +57,7 @@ export function createScene(canvas) {
   const baseShadow = makeBlob(blobTex, 0.62, 0.38);
   scene.add(baseShadow);
 
-  const camera = new THREE.PerspectiveCamera(36, window.innerWidth / window.innerHeight, 0.05, 60);
+  const camera = new THREE.PerspectiveCamera(BASE_FOV, window.innerWidth / window.innerHeight, 0.05, 60);
   camera.position.set(2.1, 1.35, 1.75);
 
   const controls = new OrbitControls(camera, canvas);
@@ -73,9 +75,20 @@ export function createScene(canvas) {
   function resize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     camera.aspect = window.innerWidth / window.innerHeight;
+    // Keep the horizontal field of view from collapsing on portrait screens.
+    const MIN_ASPECT = 1.3;
+    const base = Math.tan(THREE.MathUtils.degToRad(BASE_FOV / 2));
+    camera.fov = camera.aspect >= MIN_ASPECT
+      ? BASE_FOV
+      : Math.min(78, THREE.MathUtils.radToDeg(2 * Math.atan(base * MIN_ASPECT / camera.aspect)));
+    // On portrait screens the panel covers the top: shift the picture down to make room.
+    const w = window.innerWidth, h = window.innerHeight;
+    if (camera.aspect < 1) camera.setViewOffset(w, h, 0, -h * 0.17, w, h);
+    else camera.clearViewOffset();
     camera.updateProjectionMatrix();
   }
   window.addEventListener('resize', resize);
+  resize();
 
   return { renderer, scene, camera, controls, blobTex };
 }

@@ -73,6 +73,8 @@ let clean = false, hintOn = true;
 const ui = new UI({ root: document.getElementById('ui'), arm, actions });
 const input = new Input({ arm, camera, actions });
 ui.setHint(true);
+// No keyboard on touch devices: start with the slider panel driving the arm.
+if (window.matchMedia('(pointer: coarse)').matches) actions.setMode('joints');
 
 if (new URLSearchParams(location.search).has('debug')) window.__app = { arm, physics, input, camera, controls, scene, THREE };
 

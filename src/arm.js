@@ -14,6 +14,14 @@ export const FINGER_HALF = { x: FINGER_W / 2, y: FINGER_LEN / 2, z: 0.025 };
 export const PALM_HALF = { x: 0.1, y: 0.02, z: 0.0375 };
 export { FINGER_Y, PALM_Y };
 
+// Vertical drop of the lowest fingertip corner below the TCP for a tool tilt of `ad` radians,
+// given roll and finger half-gap. Tilting swings the (open) fingers about the wrist, and how
+// much depends on whether the finger axis lies in the tilt plane (roll = 90deg) or across it.
+const tipDrop = (ad, roll, gap) =>
+  0.035 * Math.cos(ad) + ((gap + 0.018) * Math.abs(Math.sin(roll)) + 0.026 * Math.abs(Math.cos(roll))) * Math.sin(ad);
+const FLOOR_MARGIN = 0.0005;
+const TILT_STEP = 0.01;
+const MAX_TILT_STEPS = 50; // up to 0.5 rad of tool tilt
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const wrapPi = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -182,16 +190,32 @@ export class Arm {
   /* ---------- kinematics ---------- */
 
   // Returns [yaw, shoulder, elbow, wrist, roll] or null if unreachable / out of limits.
-  solveIK(pos, yaw, prevRoll) {
+  solveIK(pos, yaw, prevRoll, maxRollJump = Infinity) {
     const r = Math.hypot(pos.x, pos.z);
     if (r < 0.14 || pos.y < ARM.minTcpY - 1e-6) return null;
     const q0 = Math.atan2(pos.x, pos.z);
     const lim = JOINTS;
     if (q0 < lim[0].min || q0 > lim[0].max) return null;
 
-    for (let k = 0; k <= 14; k++) {
-      const dphi = k === 0 ? 0 : (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.05;
+    // Prefer a vertical tool; otherwise the smallest tilt that is feasible (fine steps keep
+    // the solution continuous as the target moves, so the arm does not flicker at the edge).
+    const sgn = this._tiltSign || 1;
+    // Gripper is symmetric under 180deg: pick the equivalent roll nearest the current one.
+    const want = q0 - yaw;
+    let roll = null;
+    for (let m = -3; m <= 3; m++) {
+      const cand = want + m * Math.PI;
+      if (Math.abs(cand) > lim[4].max) continue;
+      if (roll === null || Math.abs(cand - prevRoll) < Math.abs(roll - prevRoll)) roll = cand;
+    }
+    if (roll === null || Math.abs(roll - prevRoll) > maxRollJump) return null;
+
+    for (let k = 0; k <= 2 * MAX_TILT_STEPS; k++) {
+      const dphi = k === 0 ? 0 : (k % 2 ? sgn : -sgn) * Math.ceil(k / 2) * TILT_STEP;
       const phi = Math.PI + dphi;
+      // keep the lowest fingertip corner above the floor (tilting lowers it)
+      const ad = Math.abs(dphi);
+      if (pos.y - tipDrop(ad, roll, ARM.fingerHalfTravel) < FLOOR_MARGIN) continue;
       const Wr = r - TCP * Math.sin(phi);
       const Wy = pos.y - TCP * Math.cos(phi) - shoulderY;
       const d2 = Wr * Wr + Wy * Wy;
@@ -203,16 +227,8 @@ export class Arm {
       if (q1 < lim[1].min || q1 > lim[1].max) continue;
       if (q2 < lim[2].min || q2 > lim[2].max) continue;
       if (q3 < lim[3].min || q3 > lim[3].max) continue;
-      // Gripper is symmetric under 180deg: pick the equivalent roll nearest the current one.
-      const want = q0 - yaw;
-      let best = null;
-      for (let m = -3; m <= 3; m++) {
-        const cand = want + m * Math.PI;
-        if (Math.abs(cand) > lim[4].max) continue;
-        if (best === null || Math.abs(cand - prevRoll) < Math.abs(best - prevRoll)) best = cand;
-      }
-      if (best === null) continue;
-      return [q0, q1, q2, q3, best];
+      if (dphi !== 0) this._tiltSign = Math.sign(dphi);
+      return [q0, q1, q2, q3, roll];
     }
     return null;
   }
@@ -285,7 +301,7 @@ export class Arm {
         clamp(t.pos.y + cy, ARM.minTcpY, 0.85),
         clamp(t.pos.z + cz, -1.1, 1.1)
       );
-      const sol = this.solveIK(p, yaw, roll);
+      const sol = this.solveIK(p, yaw, roll, 0.6);
       if (sol) { this._commit(p, yaw, sol); return true; }
     }
     return false;
@@ -305,12 +321,35 @@ export class Arm {
     const st = this.fine ? 0.26 : 0.15;
     for (const j of this.q) smoothDamp(j, st, 4.0, dt);
     smoothDamp(this.grip, 0.07, 0.6, dt);
+    this._floorGuard();
     if (this.grip.v < this.grip.min) {
       this.grip.v = this.grip.min;
       if (this.grip.vel < 0) this.grip.vel = 0;
     }
     this._apply();
     this.group.updateMatrixWorld(true);
+  }
+
+  // Joint-space lag can briefly cut a corner through the floor. If the actual fingertip would
+  // dip below it, lift the wrist point just enough (keeping the tool tilt) so it never clips.
+  _floorGuard() {
+    const [, s, e, w, roll] = this.q.map((j) => j.v);
+    const phi = s + e + w;
+    const r = L1 * Math.sin(s) + L2 * Math.sin(s + e) + TCP * Math.sin(phi);
+    const y = shoulderY + L1 * Math.cos(s) + L2 * Math.cos(s + e) + TCP * Math.cos(phi);
+    const ad = Math.abs(wrapPi(phi - Math.PI));
+    const deficit = FLOOR_MARGIN + tipDrop(ad, roll, this.grip.v) - y;
+    if (deficit <= 0) return;
+    const Wr = r - TCP * Math.sin(phi);
+    const Wy = y + deficit - TCP * Math.cos(phi) - shoulderY;
+    const c = (Wr * Wr + Wy * Wy - L1 * L1 - L2 * L2) / (2 * L1 * L2);
+    if (c < -1 || c > 1) return;
+    const q2 = Math.acos(c);
+    const q1 = Math.atan2(Wr, Wy) - Math.atan2(L2 * Math.sin(q2), L1 + L2 * c);
+    if (q1 < JOINTS[1].min || q1 > JOINTS[1].max || q2 < JOINTS[2].min || q2 > JOINTS[2].max) return;
+    this.q[1].v = q1;
+    this.q[2].v = q2;
+    this.q[3].v = phi - q1 - q2;
   }
 
   _apply() {
