@@ -12,7 +12,6 @@ const PALM_Y = 0.13;
 
 export const FINGER_HALF = { x: FINGER_W / 2, y: FINGER_LEN / 2, z: 0.025 };
 export const PALM_HALF = { x: 0.1, y: 0.02, z: 0.0375 };
-export { FINGER_Y, PALM_Y };
 
 // Vertical drop of the lowest fingertip corner below the TCP for a tool tilt of `ad` radians,
 // given roll and finger half-gap. Tilting swings the (open) fingers about the wrist, and how
@@ -62,13 +61,41 @@ function taperedLink(len, r0, r1, seg = 64) {
   return lathe(pts, seg);
 }
 
+// Fine horizontal grip ridges for the rubber pads (bump map only).
+function ridgeTexture() {
+  const c = document.createElement('canvas');
+  c.width = 16; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#9a9a9a';
+  g.fillRect(0, 0, 16, 128);
+  for (let i = 0; i < 16; i++) {
+    const y = 4 + i * 7.6;
+    const grad = g.createLinearGradient(0, y - 2.5, 0, y + 2.5);
+    grad.addColorStop(0, '#9a9a9a'); grad.addColorStop(0.5, '#2a2a2a'); grad.addColorStop(1, '#9a9a9a');
+    g.fillStyle = grad;
+    g.fillRect(0, y - 2.5, 16, 5);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.anisotropy = 4;
+  return t;
+}
+
+const BREATH = [
+  { a: 0.0015, f: 0.29, p: 0.0 },   // base yaw
+  { a: 0.0025, f: 0.23, p: 1.7 },   // shoulder
+  { a: 0.0040, f: 0.37, p: 3.1 },   // elbow
+  { a: 0.0050, f: 0.31, p: 4.6 },   // wrist
+];
+const TAU = Math.PI * 2;
+const ZERO4 = new Float64Array(4);
+
 export class Arm {
   constructor() {
     this.group = new THREE.Group();
     this.mats = {
       white: new THREE.MeshStandardMaterial({ color: PALETTE.white, roughness: 0.42, metalness: 0.02 }),
       graphite: new THREE.MeshStandardMaterial({ color: PALETTE.graphite, roughness: 0.46, metalness: 0.4 }),
-      rubber: new THREE.MeshStandardMaterial({ color: PALETTE.rubber, roughness: 0.95, metalness: 0 }),
+      rubber: new THREE.MeshStandardMaterial({ color: PALETTE.rubber, roughness: 0.92, metalness: 0, bumpMap: ridgeTexture(), bumpScale: 1.5 }),
       accent: new THREE.MeshStandardMaterial({
         color: PALETTE.accent, roughness: 0.4, metalness: 0.1,
         emissive: PALETTE.accent, emissiveIntensity: 0.18,
@@ -80,8 +107,12 @@ export class Arm {
     this.grip = { v: ARM.fingerHalfTravel, vel: 0, t: ARM.fingerHalfTravel, min: 0 };
     this.mode = 'cartesian';
     this.fine = false;
+    this.clock = 0;          // sim time, drives the idle breathing
+    this.breathF = 1;        // breathing amount (fades out while working near blocks)
+    this.breathT = 1;
+    this._b = new Float64Array(4);
     this.target = { pos: new THREE.Vector3(0.0, 0.3, 0.5), yaw: 0 };
-    this._lastValid = { pos: this.target.pos.clone(), yaw: 0 };
+    this._lastValid = { pos: this.target.pos.clone() };
 
     const q = this.solveIK(this.target.pos, this.target.yaw, 0);
     q.forEach((v, i) => { this.q[i].v = this.q[i].t = v; });
@@ -170,7 +201,7 @@ export class Arm {
       this.rollG.add(f);
       add(f, new RoundedBoxGeometry(FINGER_W, FINGER_LEN, 0.05, 4, 0.006), graphite);
       // rubber pad on inner face
-      add(f, new RoundedBoxGeometry(0.004, FINGER_LEN * 0.78, 0.044, 2, 0.0015), rubber, -s * (FINGER_W / 2 + 0.0005), -0.008, 0);
+      add(f, new RoundedBoxGeometry(0.006, FINGER_LEN * 0.8, 0.045, 3, 0.0025), rubber, -s * (FINGER_W / 2 - 0.003 + 0.0005), -0.006, 0);
       this.fingers.push({ g: f, side: s });
     }
 
@@ -234,7 +265,8 @@ export class Arm {
   }
 
   // Forward kinematics from joint angles -> TCP position and world yaw of the fingers.
-  forward(q = this.q.map((j) => j.v)) {
+  forward(q) {
+    if (!q) { q = this._fq || (this._fq = [0, 0, 0, 0, 0]); for (let i = 0; i < 5; i++) q[i] = this.q[i].v; }
     const a1 = q[1], a2 = q[1] + q[2], a3 = a2 + q[3];
     const r = L1 * Math.sin(a1) + L2 * Math.sin(a2) + TCP * Math.sin(a3);
     const y = shoulderY + L1 * Math.cos(a1) + L2 * Math.cos(a2) + TCP * Math.cos(a3);
@@ -326,6 +358,7 @@ export class Arm {
       tilt: this._tiltSign || 1,
       mode: this.mode,
       fine: this.fine,
+      breath: [this.clock, this.breathF, this.breathT],
     };
   }
 
@@ -338,7 +371,8 @@ export class Arm {
     this._tiltSign = s.tilt;
     this.mode = s.mode;
     this.fine = s.fine;
-    this._apply();
+    [this.clock, this.breathF, this.breathT] = s.breath;
+    this._apply(ZERO4);
     this.group.updateMatrixWorld(true);
   }
 
@@ -365,21 +399,29 @@ export class Arm {
 
   step(dt) {
     const st = this.fine ? 0.26 : 0.15;
-    for (const j of this.q) smoothDamp(j, st, 4.0, dt);
-    smoothDamp(this.grip, 0.07, 0.6, dt);
-    this._floorGuard();
+    for (let i = 0; i < 5; i++) smoothDamp(this.q[i], st, 4.0, dt);
+    smoothDamp(this.grip, 0.09, 0.6, dt);
     if (this.grip.v < this.grip.min) {
       this.grip.v = this.grip.min;
       if (this.grip.vel < 0) this.grip.vel = 0;
     }
-    this._apply();
+
+    // Idle breathing: a tiny deterministic sway (a function of sim time, so replays match).
+    this.clock += dt;
+    this.breathF += (this.breathT - this.breathF) * (1 - Math.exp(-dt / 0.3));
+    const b = this._b;
+    for (let i = 0; i < 4; i++) b[i] = BREATH[i].a * this.breathF * Math.sin(TAU * BREATH[i].f * this.clock + BREATH[i].p);
+
+    this._floorGuard(b);
+    this._apply(b);
     this.group.updateMatrixWorld(true);
   }
 
   // Joint-space lag can briefly cut a corner through the floor. If the actual fingertip would
   // dip below it, lift the wrist point just enough (keeping the tool tilt) so it never clips.
-  _floorGuard() {
-    const [, s, e, w, roll] = this.q.map((j) => j.v);
+  _floorGuard(b) {
+    const q = this.q;
+    const s = q[1].v + b[1], e = q[2].v + b[2], w = q[3].v + b[3], roll = q[4].v;
     const phi = s + e + w;
     const r = L1 * Math.sin(s) + L2 * Math.sin(s + e) + TCP * Math.sin(phi);
     const y = shoulderY + L1 * Math.cos(s) + L2 * Math.cos(s + e) + TCP * Math.cos(phi);
@@ -393,17 +435,17 @@ export class Arm {
     const q2 = Math.acos(c);
     const q1 = Math.atan2(Wr, Wy) - Math.atan2(L2 * Math.sin(q2), L1 + L2 * c);
     if (q1 < JOINTS[1].min || q1 > JOINTS[1].max || q2 < JOINTS[2].min || q2 > JOINTS[2].max) return;
-    this.q[1].v = q1;
-    this.q[2].v = q2;
-    this.q[3].v = phi - q1 - q2;
+    q[1].v = q1 - b[1];
+    q[2].v = q2 - b[2];
+    q[3].v = phi - q1 - q2 - b[3];
   }
 
-  _apply() {
+  _apply(b = ZERO4) {
     const q = this.q;
-    this.yawG.rotation.y = q[0].v;
-    this.shoulderG.rotation.x = q[1].v;
-    this.elbowG.rotation.x = q[2].v;
-    this.wristG.rotation.x = q[3].v;
+    this.yawG.rotation.y = q[0].v + b[0];
+    this.shoulderG.rotation.x = q[1].v + b[1];
+    this.elbowG.rotation.x = q[2].v + b[2];
+    this.wristG.rotation.x = q[3].v + b[3];
     this.rollG.rotation.y = q[4].v;
     for (const f of this.fingers) f.g.position.x = f.side * (this.grip.v + FINGER_W / 2);
   }

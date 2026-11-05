@@ -10,6 +10,8 @@
 //  * physics contains no randomness
 import { PHYS } from './config.js';
 
+// Bump whenever the arm/physics behaviour changes: older recordings would no longer replay exactly.
+const SIM_VERSION = 2;
 export const MAX_STEPS = 36000;            // 5 minutes at 120 Hz
 const STORAGE_KEY = 'robotarm.recording.v1';
 const CMD_LEN = 12;
@@ -24,7 +26,7 @@ export function restoreScene(arm, physics, scene) {
 }
 
 /** Largest block position difference (metres) between two block-state arrays. */
-export function blockDrift(a, b) {
+function blockDrift(a, b) {
   let m = 0;
   for (let i = 0; i < a.length; i++) {
     for (let k = 0; k < 3; k++) m = Math.max(m, Math.abs(a[i].p[k] - b[i].p[k]));
@@ -50,12 +52,11 @@ export class Recorder {
   get replaying() { return this.state === 'replaying'; }
   get hasData() { return !!this.data && this.data.steps > 0; }
   get totalSteps() { return this.data ? this.data.steps : 0; }
-  get seconds() { return this.step * PHYS.step; }
 
   /* ---------- recording ---------- */
 
   startRecording(scene) {
-    this.data = { v: 1, dt: PHYS.step, snapshot: scene, events: [], steps: 0, final: null };
+    this.data = { v: 1, sim: SIM_VERSION, dt: PHYS.step, snapshot: scene, events: [], steps: 0, final: null };
     this.state = 'recording';
     this.step = 0;
     this._last = null;
@@ -183,13 +184,14 @@ function validBlocks(b) {
 function validate(d) {
   if (!d || typeof d !== 'object') return 'not a recording';
   if (d.v !== 1) return 'unsupported recording version';
+  if (d.sim !== SIM_VERSION) return 'recorded with a different simulator version';
   if (d.dt !== PHYS.step) return 'recorded at a different physics rate';
   if (!Number.isInteger(d.steps) || d.steps < 1 || d.steps > MAX_STEPS) return 'invalid length';
   const s = d.snapshot;
   if (!s || !validBlocks(s.blocks)) return 'invalid block snapshot';
   const a = s.arm;
   if (!a || !Array.isArray(a.q) || a.q.length !== 5 || !a.q.every((j) => numArr(j, 3)) ||
-      !numArr(a.grip, 4) || !numArr(a.target, 4) || !numArr(a.lastValid, 3) || !isNum(a.tilt) ||
+      !numArr(a.grip, 4) || !numArr(a.breath, 3) || !numArr(a.target, 4) || !numArr(a.lastValid, 3) || !isNum(a.tilt) ||
       !['cartesian', 'joints'].includes(a.mode) || typeof a.fine !== 'boolean') return 'invalid arm snapshot';
   if (!validBlocks(d.final)) return 'invalid final state';
   if (!Array.isArray(d.events) || d.events.length < 1 || d.events.length > MAX_STEPS) return 'invalid events';

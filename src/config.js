@@ -33,3 +33,5 @@ export const PHYS = {
   step: 1 / 120,
   maxSteps: 6,
 };
+
+export const REPLAY_SPEEDS = [0.5, 1, 2, 4];

@@ -5,11 +5,14 @@ import { Arm } from './arm.js';
 import { Physics, makeBlockSpecs } from './physics.js';
 import { Input } from './input.js';
 import { UI } from './ui.js';
+import { Sound } from './audio.js';
+import { analyzeStacks } from './stacks.js';
+import { Challenge } from './challenge.js';
 import { Recorder, captureScene, restoreScene, MAX_STEPS } from './recorder.js';
-import { PHYS, PALETTE, ARM } from './config.js';
+import { PHYS, PALETTE, ARM, REPLAY_SPEEDS } from './config.js';
 
 const canvas = document.getElementById('view');
-const { renderer, scene, camera, controls, blobTex } = createScene(canvas);
+const { renderer, scene, camera, controls, blobTex, rig, setViewBand } = createScene(canvas);
 
 const arm = new Arm();
 scene.add(arm.group);
@@ -24,8 +27,20 @@ physics.blocks.forEach((b) => {
     new THREE.MeshStandardMaterial({ color: b.spec.color, roughness: 0.68, metalness: 0 })
   );
   mesh.castShadow = mesh.receiveShadow = true;
+  mesh.material.emissive.setHex(PALETTE.accent);
+  mesh.material.emissiveIntensity = 0;
+  // thin outline: a slightly larger back-face shell, only visible while highlighted
+  const outline = new THREE.Mesh(
+    new RoundedBoxGeometry(w + 0.009, h + 0.009, d + 0.009, 3, 0.012),
+    new THREE.MeshBasicMaterial({ color: PALETTE.accent, side: THREE.BackSide, transparent: true, opacity: 0, depthWrite: false })
+  );
+  outline.visible = false;
+  mesh.add(outline);
   scene.add(mesh);
   b.mesh = mesh;
+  b.outline = outline;
+  b.hl = 0;       // eased highlight amount
+  b.flash = 0;    // brief extra pulse when gripped
   b.blob = makeBlob(blobTex, Math.max(w, d) * 2.1, 0.4);
   scene.add(b.blob);
 });
@@ -43,22 +58,20 @@ for (const s of [-1, 1]) {
   t.position.x = s * 0.062;
   ticks.add(t);
 }
+ringM.position.y = ticks.position.y = 0.002;
 marker.add(ringM, diamond, stem, ticks);
 scene.add(marker);
 
 function updateMarker() {
   const p = arm.target.pos;
-  marker.visible = arm.mode === 'cartesian' && markerOn;
+  marker.visible = arm.mode === 'cartesian';
   marker.position.set(p.x, 0, p.z);
-  ringM.position.y = 0.002;
-  ticks.position.y = 0.002;
   ticks.rotation.y = arm.target.yaw;
   diamond.position.y = p.y;
   diamond.rotation.y += 0.02;
   stem.scale.y = Math.max(0.001, p.y);
   stem.position.y = p.y / 2;
 }
-let markerOn = true;
 
 // ----- motion trail (replay) -----
 const TRAIL_MAX = 6000;
@@ -89,6 +102,14 @@ function syncAfterRestore() {
   ui.setMode(arm.mode);
 }
 
+// ----- sound, challenge -----
+const sound = new Sound();
+const challenge = new Challenge(scene);
+let muted = false;   // true while scrubbing, so fast-forwarded events stay silent
+physics.onGrasp = (b) => { b.flash = 1; if (!muted) sound.grip(); };
+physics.onRelease = () => { if (!muted) sound.place(); };
+rig.onChange = (name) => ui.setPreset(name);
+
 // ----- UI + input -----
 const actions = {
   isLocked: () => rec.replaying,
@@ -100,6 +121,23 @@ const actions = {
   toggleHint() { hintOn = !hintOn; ui.setHint(hintOn); },
   toggleTrail() { trail.visible = !trail.visible; ui.setTrail(trail.visible); },
   setSpeed(v) { rec.speed = v; },
+  cycleSpeed(dir) {
+    const i = REPLAY_SPEEDS.indexOf(rec.speed);
+    rec.speed = REPLAY_SPEEDS[Math.max(0, Math.min(REPLAY_SPEEDS.length - 1, i + dir))];
+  },
+  toggleSound() { sound.setEnabled(!sound.enabled); ui.setSound(sound.enabled); },
+  setPreset(name) { rig.go(name); },
+
+  startChallenge(key) {
+    if (rec.recording || rec.replaying) { ui.chalMsg('Stop recording / replay first'); return; }
+    ui.setShape(key);
+    actions.reset();                // fresh blocks, then the clock starts
+    challenge.start(key);
+    ui.hideSuccess();
+    ui.chalMsg('');
+    ui.chalCard.set(true);
+  },
+  cancelChallenge() { challenge.cancel(); ui.hideSuccess(); ui.chalMsg('Build the ghost shape with the blocks.'); },
 
   // Reset the whole scene (arm and blocks) to the default start.
   reset() {
@@ -109,6 +147,7 @@ const actions = {
     trailClear();
     syncAfterRestore();
     acc = 0;
+    if (challenge.active) { challenge.restart(); ui.hideSuccess(); }   // reset = retry
   },
 
   record() {
@@ -189,16 +228,50 @@ function finishReplay() {
 let clean = false, hintOn = true;
 const ui = new UI({ root: document.getElementById('ui'), arm, rec, actions });
 ui.setTrail(true);
+ui.setPreset('hero');
+ui.chalMsg('Build the ghost shape with the blocks.');
 const input = new Input({ arm, camera, actions });
 ui.setHint(true);
 // No keyboard on touch devices: start with the slider panel driving the arm.
 if (window.matchMedia('(pointer: coarse)').matches) actions.setMode('joints');
 
-if (new URLSearchParams(location.search).has('debug')) window.__app = { arm, physics, input, camera, controls, scene, THREE, rec, actions, simStep: () => simStep(), restoreScene, captureScene, home };
+if (new URLSearchParams(location.search).has('debug')) window.__app = { renderer, arm, physics, input, camera, controls, scene, THREE, rec, actions, challenge, sound, rig, analyzeStacks, simStep: () => simStep(), restoreScene, captureScene, home };
+
+// Keep the arm centred in the free area between the panels (matters on portrait screens).
+function layoutView() {
+  const top = ui.panel.getBoundingClientRect().bottom;
+  const bottom = ui.col.getBoundingClientRect().top;
+  setViewBand(top, bottom > top ? bottom : window.innerHeight);
+}
+ui.onLayout = layoutView;
+window.addEventListener('resize', layoutView);
+layoutView();
 
 // ----- loop -----
 const clock = new THREE.Clock();
 let acc = 0;
+
+// Highlight what a grab would pick up: soft outline when near, strong when inside the grasp zone,
+// a brief bright pulse at the moment of grip.
+function updateHighlights(dt) {
+  const cand = physics.candidate();
+  const held = physics.held ? physics.held.block : null;
+  const k = 1 - Math.exp(-dt / 0.08);
+  for (const b of physics.blocks) {
+    const target = b === held ? 0.5 : cand && cand.block === b ? (cand.ready ? 0.95 : 0.3) : 0;
+    b.hl += (target - b.hl) * k;
+    b.flash = Math.max(0, b.flash - dt / 0.55);
+    const op = Math.min(1, b.hl + b.flash);
+    const on = op > 0.01;
+    if (b.outline.visible !== on) b.outline.visible = on;
+    if (on) {
+      b.outline.material.opacity = op;
+      b.outline.material.color.setHex(PALETTE.accent).lerp(WHITE, Math.min(1, b.flash));
+    }
+    b.mesh.material.emissiveIntensity = 0.22 * op;
+  }
+}
+const WHITE = new THREE.Color(1, 1, 1);
 
 function syncVisuals() {
   for (const b of physics.blocks) {
@@ -222,6 +295,7 @@ function simStep() {
   } else {
     input.update(PHYS.step);
     if (rec.recording) rec.sample(arm);
+    challenge.tick(PHYS.step);
   }
   arm.step(PHYS.step);
   physics.step(PHYS.step);
@@ -252,7 +326,9 @@ function processSeek() {
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   if (rec.replaying && rec.seekTarget !== null) {
+    muted = true;
     processSeek();
+    muted = false;
   } else if (!(rec.replaying && rec.paused)) {
     // Replay speed only changes how many identical fixed steps run per frame.
     const speed = rec.replaying ? rec.speed : 1;
@@ -269,9 +345,17 @@ function frame() {
     if (n === maxSteps) acc = 0;
   }
 
+  rig.update(dt);
+  if (challenge.active && !rec.replaying && challenge.evaluate(physics.blocks, physics.held, dt)) {
+    ui.showSuccess({ label: challenge.label, time: challenge.time, best: challenge.bestTime, newBest: challenge.newBest });
+    sound.success();
+  }
+  challenge.animate(clock.elapsedTime);
+
   syncVisuals();
+  updateHighlights(dt);
   updateMarker();
-  ui.update();
+  ui.update(analyzeStacks(physics.blocks, physics.held), challenge);
   controls.update();
   renderer.render(scene, camera);
   requestAnimationFrame(frame);

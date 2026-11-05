@@ -3,6 +3,7 @@ import { ARM } from './config.js';
 
 const SPEED = { move: 0.5, lift: 0.4, yaw: 2.0 };
 const FINE = 0.25;
+const EASE = 0.09;   // seconds
 
 /** Keyboard handling. Cartesian motion is camera-relative so W always means "away from the viewer". */
 export class Input {
@@ -13,6 +14,8 @@ export class Input {
     this.keys = new Set();
     this.gripOpen = true;
     this._f = new THREE.Vector3();
+    // eased command velocities in [-1, 1]: fwd, side, lift, yaw
+    this.v = { fwd: 0, side: 0, lift: 0, yaw: 0 };
 
     window.addEventListener('keydown', (e) => this._down(e));
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -32,10 +35,12 @@ export class Input {
       case 'KeyC': this.actions.record(); break;
       case 'KeyP': this.actions.autopilot(); break;
       case 'KeyT': this.actions.toggleTrail(); break;
-      case 'Digit1': this.actions.setSpeed(0.5); break;
-      case 'Digit2': this.actions.setSpeed(1); break;
-      case 'Digit3': this.actions.setSpeed(2); break;
-      case 'Digit4': this.actions.setSpeed(4); break;
+      case 'Digit1': this.actions.setPreset('front'); break;
+      case 'Digit2': this.actions.setPreset('top'); break;
+      case 'Digit3': this.actions.setPreset('hero'); break;
+      case 'BracketLeft': this.actions.cycleSpeed(-1); break;
+      case 'BracketRight': this.actions.cycleSpeed(1); break;
+      case 'KeyK': this.actions.toggleSound(); break;
       case 'KeyH': this.actions.toggleClean(); break;
       case 'KeyO': this.actions.toggleOrbit(); break;
       case 'KeyX': this.actions.reset(); break;
@@ -58,9 +63,8 @@ export class Input {
     const arm = this.arm;
     if (this.actions.isLocked()) return;
     arm.fine = this.fine;
-    if (arm.mode !== 'cartesian') return;
+    if (arm.mode !== 'cartesian') { this.v.fwd = this.v.side = this.v.lift = this.v.yaw = 0; return; }
     const k = this.fine ? FINE : 1;
-
     let fwd = 0, side = 0, lift = 0, yaw = 0;
     if (this.isDown('KeyW')) fwd += 1;
     if (this.isDown('KeyS')) fwd -= 1;
@@ -70,7 +74,19 @@ export class Input {
     if (this.isDown('KeyF')) lift -= 1;
     if (this.isDown('KeyE')) yaw += 1;
     if (this.isDown('KeyQ')) yaw -= 1;
-    if (!fwd && !side && !lift && !yaw) return;
+
+    // Ease toward the commanded direction: a soft start and a short glide to a stop.
+    const v = this.v;
+    const a = 1 - Math.exp(-dt / EASE);
+    v.fwd += (fwd - v.fwd) * a;
+    v.side += (side - v.side) * a;
+    v.lift += (lift - v.lift) * a;
+    v.yaw += (yaw - v.yaw) * a;
+    fwd = v.fwd; side = v.side; lift = v.lift; yaw = v.yaw;
+    if (Math.abs(fwd) + Math.abs(side) + Math.abs(lift) + Math.abs(yaw) < 1e-3) {
+      v.fwd = v.side = v.lift = v.yaw = 0;
+      return;
+    }
 
     // camera-relative ground axes
     this.camera.getWorldDirection(this._f);

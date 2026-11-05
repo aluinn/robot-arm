@@ -67,7 +67,7 @@ export function createScene(canvas) {
   controls.enablePan = false;
   controls.minDistance = 1.1;
   controls.maxDistance = 4.2;
-  controls.minPolarAngle = 0.25;
+  controls.minPolarAngle = 0.05;
   controls.maxPolarAngle = Math.PI / 2 - 0.04;
   controls.autoRotateSpeed = 0.55;
   controls.update();
@@ -81,16 +81,22 @@ export function createScene(canvas) {
     camera.fov = camera.aspect >= MIN_ASPECT
       ? BASE_FOV
       : Math.min(78, THREE.MathUtils.radToDeg(2 * Math.atan(base * MIN_ASPECT / camera.aspect)));
-    // On portrait screens the panel covers the top: shift the picture down to make room.
+    applyViewBand();
+  }
+  // On portrait screens the UI covers the top and bottom: centre the picture in the free band.
+  let band = null;
+  function applyViewBand() {
     const w = window.innerWidth, h = window.innerHeight;
-    if (camera.aspect < 1) camera.setViewOffset(w, h, 0, -h * 0.17, w, h);
+    if (camera.aspect < 1 && band) camera.setViewOffset(w, h, 0, h / 2 - (band.top + band.bottom) / 2, w, h);
     else camera.clearViewOffset();
     camera.updateProjectionMatrix();
   }
+  function setViewBand(top, bottom) { band = top === null ? null : { top, bottom }; applyViewBand(); }
   window.addEventListener('resize', resize);
   resize();
 
-  return { renderer, scene, camera, controls, blobTex };
+  const rig = new CameraRig(camera, controls);
+  return { renderer, scene, camera, controls, blobTex, rig, setViewBand };
 }
 
 function makeBlobTexture() {
@@ -117,4 +123,83 @@ export function makeBlob(tex, size, opacity) {
   m.position.y = 0.0015;
   m.renderOrder = 1;
   return m;
+}
+
+/* ---------- camera presets ---------- */
+
+const PRESETS = {
+  front: { pos: [0.0, 0.7, 2.55], target: [0.0, 0.3, 0.35] },
+  top: { pos: [0.0, 3.3, 0.78], target: [0.0, 0.0, 0.45] },
+  hero: { pos: [2.1, 1.35, 1.75], target: [0.0, 0.28, 0.4] },
+};
+
+const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+/** Smoothly moves the camera between presets (orbiting around, never cutting through the floor). */
+class CameraRig {
+  constructor(camera, controls) {
+    this.camera = camera;
+    this.controls = controls;
+    this.active = 'hero';
+    this.onChange = null;            // (name|null) => void
+    this.tweening = false;
+    this._t = 0;
+    this._dur = 1;
+    this._fromT = new THREE.Vector3();
+    this._toT = new THREE.Vector3();
+    this._fromS = new THREE.Spherical();
+    this._toS = new THREE.Spherical();
+    this._s = new THREE.Spherical();
+    this._v = new THREE.Vector3();
+    this._rotate = false;
+    // any manual orbit/zoom cancels the preset
+    controls.addEventListener('start', () => this._interrupt());
+  }
+
+  go(name, duration = 0.9) {
+    const p = PRESETS[name];
+    if (!p) return;
+    const c = this.controls;
+    if (!this.tweening) this._rotate = c.autoRotate;
+    c.autoRotate = false;
+    this._fromT.copy(c.target);
+    this._fromS.setFromVector3(this._v.copy(this.camera.position).sub(c.target));
+    this._toT.set(...p.target);
+    this._toS.setFromVector3(this._v.set(...p.pos).sub(this._toT));
+    this._t = 0;
+    this._dur = duration;
+    this.tweening = true;
+    this._set(name);
+  }
+
+  update(dt) {
+    if (!this.tweening) return;
+    this._t = Math.min(1, this._t + dt / this._dur);
+    const e = ease(this._t);
+    const c = this.controls;
+    c.target.lerpVectors(this._fromT, this._toT, e);
+    const a = this._fromS, b = this._toS, s = this._s;
+    s.radius = a.radius + (b.radius - a.radius) * e;
+    s.phi = a.phi + (b.phi - a.phi) * e;
+    s.theta = a.theta + wrapAngle(b.theta - a.theta) * e;
+    this.camera.position.setFromSpherical(s).add(c.target);
+    if (this._t >= 1) this._finish();
+  }
+
+  _finish() {
+    this.tweening = false;
+    this.controls.autoRotate = this._rotate;
+  }
+
+  _interrupt() {
+    if (this.tweening) this._finish();
+    this._set(null);
+  }
+
+  _set(name) {
+    if (this.active === name) return;
+    this.active = name;
+    if (this.onChange) this.onChange(name);
+  }
 }

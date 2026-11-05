@@ -58,15 +58,33 @@ const ROTS = (() => {
   return out;
 })();
 
+// Scratch objects: the step loop runs ~120x per second, so nothing in it may allocate.
 const tmpM = new THREE.Matrix4();
+const tmpInv = new THREE.Matrix4();
+const tmpWorld = new THREE.Matrix4();
+const tmpRel = new THREE.Matrix4();
+const bestRel = new THREE.Matrix4();
 const tmpV = new THREE.Vector3();
+const tmpP = new THREE.Vector3();
+const tmpS = new THREE.Vector3();
+const ONE = new THREE.Vector3(1, 1, 1);
 const tmpQ = new THREE.Quaternion();
 const tmpQ2 = new THREE.Quaternion();
+const tmpQ3 = new THREE.Quaternion();
+const kInv = new THREE.Quaternion();   // _setKinematic only
+const kDelta = new THREE.Quaternion();
+const tmpBasis = new THREE.Matrix4();
+const tmpA = new THREE.Vector3();
+const tmpB = new THREE.Vector3();
+const tmpC = new THREE.Vector3();
+
+const SETTLE_TIME = 0.4;       // seconds of extra damping after a release
+const SETTLE_LIN = 0.5, SETTLE_ANG = 0.9;
+const BASE_LIN = 0.03, BASE_ANG = 0.25;
 
 export class Physics {
   constructor(arm, specs) {
     this.arm = arm;
-    this.specs = specs;
     this.blocks = specs.map((s) => ({
       spec: s,
       half: new CANNON.Vec3(s.size[0] / 2, s.size[1] / 2, s.size[2] / 2),
@@ -74,6 +92,8 @@ export class Physics {
       body: null, mesh: null, blob: null,
     }));
     this.held = null;
+    this.onGrasp = null;    // (block) => void
+    this.onRelease = null;  // (block) => void
     this.rebuild(null);
   }
 
@@ -130,13 +150,15 @@ export class Physics {
     };
     this.kinFingers = [kin(FINGER_HALF), kin(FINGER_HALF)];
     this.kinPalm = kin(PALM_HALF);
+    this._tools = [...this.kinFingers, this.kinPalm];
+    this._tools.forEach((t) => { t.isTool = true; });
 
     // Blocks (state === null -> the default layout)
     this.blocks.forEach((b, i) => {
       const s = b.spec;
       const body = new CANNON.Body({
         mass: b.mass, material: mBlock, shape: new CANNON.Box(b.half),
-        linearDamping: 0.03, angularDamping: 0.25,
+        linearDamping: BASE_LIN, angularDamping: BASE_ANG,
         allowSleep: true, sleepSpeedLimit: 0.12, sleepTimeLimit: 0.4,
       });
       const st = state && state[i];
@@ -154,6 +176,7 @@ export class Physics {
       w.addBody(body);
       if (st && st.s === CANNON.Body.SLEEPING) body.sleep();
       b.body = body;
+      b.settle = 0;
     });
     this.arm.grip.min = 0;
   }
@@ -172,37 +195,53 @@ export class Physics {
     });
   }
 
-  /** Back to the default layout. */
-  reset() { this.rebuild(null); }
-
   step(dt) {
     this._syncKinematics(dt);
     this._updateGrasp(dt);
     this._wakeNearTool();
     this.world.step(dt);
+    this._updateSettle(dt);
+    this._updateToolState();
+  }
+
+  // Briefly extra-damped after a release so a placed block lands softly instead of bouncing.
+  _updateSettle(dt) {
+    for (const b of this.blocks) {
+      if (b.settle <= 0) continue;
+      b.settle -= dt;
+      if (b.settle <= 0) {
+        b.body.linearDamping = BASE_LIN;
+        b.body.angularDamping = BASE_ANG;
+      }
+    }
+  }
+
+  // Tells the arm when it is working near blocks, so its idle "breathing" can fade out.
+  _updateToolState() {
+    const arm = this.arm;
+    let busy = !!this.held || arm.grip.t < arm.grip.v - 1e-4 || arm.tcpNode.matrixWorld.elements[13] < 0.1;
+    if (!busy) {
+      const cs = this.world.contacts;
+      for (let i = 0; i < cs.length; i++) {
+        if (cs[i].bi.isTool || cs[i].bj.isTool) { busy = true; break; }
+      }
+    }
+    arm.breathT = busy ? 0 : 1;
   }
 
   // cannon-es ignores contacts between a sleeping body and a slow kinematic one, so a gentle
   // push would pass straight through a resting block. Wake anything the tool is touching.
   _wakeNearTool() {
-    const movers = [...this.kinFingers, this.kinPalm];
-    if (this.held) movers.push(this.held.block.body);
-    for (const m of movers) m.updateAABB();
+    for (const m of this._tools) m.updateAABB();
+    const held = this.held ? this.held.block.body : null;
+    if (held) held.updateAABB();
     const pad = 0.012;
     for (const b of this.blocks) {
       const body = b.body;
       if (body.sleepState !== CANNON.Body.SLEEPING) continue;
       body.updateAABB();
-      for (const m of movers) {
-        if (m === body) continue;
-        const a = m.aabb, c = body.aabb;
-        if (a.lowerBound.x - pad < c.upperBound.x && a.upperBound.x + pad > c.lowerBound.x &&
-            a.lowerBound.y - pad < c.upperBound.y && a.upperBound.y + pad > c.lowerBound.y &&
-            a.lowerBound.z - pad < c.upperBound.z && a.upperBound.z + pad > c.lowerBound.z) {
-          body.wakeUp();
-          break;
-        }
-      }
+      if (touches(this._tools[0], body, pad) || touches(this._tools[1], body, pad) ||
+          touches(this._tools[2], body, pad) || (held && touches(held, body, pad))) body.wakeUp();
     }
   }
 
@@ -219,14 +258,14 @@ export class Physics {
         (pos.z - body.position.z) / dt
       );
       // angular velocity from quaternion delta
-      tmpQ.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w).invert();
-      tmpQ2.copy(quat).multiply(tmpQ);
-      if (tmpQ2.w < 0) { tmpQ2.x *= -1; tmpQ2.y *= -1; tmpQ2.z *= -1; tmpQ2.w *= -1; }
-      const ang = 2 * Math.acos(Math.min(1, tmpQ2.w));
-      const sn = Math.sqrt(Math.max(0, 1 - tmpQ2.w * tmpQ2.w));
+      kInv.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w).invert();
+      kDelta.copy(quat).multiply(kInv);
+      if (kDelta.w < 0) { kDelta.x *= -1; kDelta.y *= -1; kDelta.z *= -1; kDelta.w *= -1; }
+      const ang = 2 * Math.acos(Math.min(1, kDelta.w));
+      const sn = Math.sqrt(Math.max(0, 1 - kDelta.w * kDelta.w));
       if (sn > 1e-6 && ang > 1e-6) {
         const k = ang / sn / dt;
-        body.angularVelocity.set(tmpQ2.x * k, tmpQ2.y * k, tmpQ2.z * k);
+        body.angularVelocity.set(kDelta.x * k, kDelta.y * k, kDelta.z * k);
       } else body.angularVelocity.setZero();
     }
     body.position.set(pos.x, pos.y, pos.z);
@@ -237,14 +276,15 @@ export class Physics {
   _syncKinematics(dt) {
     const first = this._kinFirst;
     this._kinFirst = false;
-    this.arm.fingers.forEach((f, i) => {
-      f.g.getWorldPosition(tmpV);
-      f.g.getWorldQuaternion(tmpQ);
-      this._setKinematic(this.kinFingers[i], tmpV, tmpQ, dt, first);
-    });
+    for (let i = 0; i < 2; i++) {
+      const g = this.arm.fingers[i].g;
+      g.getWorldPosition(tmpV);
+      g.getWorldQuaternion(tmpQ3);
+      this._setKinematic(this.kinFingers[i], tmpV, tmpQ3, dt, first);
+    }
     this.arm.palmNode.getWorldPosition(tmpV);
-    this.arm.palmNode.getWorldQuaternion(tmpQ);
-    this._setKinematic(this.kinPalm, tmpV, tmpQ, dt, first);
+    this.arm.palmNode.getWorldQuaternion(tmpQ3);
+    this._setKinematic(this.kinPalm, tmpV, tmpQ3, dt, first);
   }
 
   /* ---------- grasping ----------
@@ -253,6 +293,14 @@ export class Physics {
    * follows the tool exactly (no solver involved -> no jitter, slip or explosions).
    * Opening the gripper hands it back to the solver with the tool's velocity.
    */
+
+  // Block pose in the tool-centre frame -> tmpRel
+  _relTo(b) {
+    const bp = b.body.position, bq = b.body.quaternion;
+    tmpWorld.compose(tmpP.set(bp.x, bp.y, bp.z), tmpQ3.set(bq.x, bq.y, bq.z, bq.w), ONE);
+    tmpRel.copy(tmpInv).multiply(tmpWorld);
+    return tmpRel.elements;
+  }
 
   _updateGrasp(dt) {
     const arm = this.arm, g = arm.grip;
@@ -266,33 +314,24 @@ export class Physics {
       const e = h.s * h.s * (3 - 2 * h.s);
       tmpV.copy(h.p0).lerp(h.p1, e);
       tmpQ.copy(h.q0).slerp(h.q1, e);
-      tmpM.compose(tmpV, tmpQ, new THREE.Vector3(1, 1, 1));
+      tmpM.compose(tmpV, tmpQ, ONE);
       tmpM.premultiply(arm.tcpNode.matrixWorld);
-      const pos = new THREE.Vector3(), quat = new THREE.Quaternion();
-      tmpM.decompose(pos, quat, new THREE.Vector3());
-      this._setKinematic(h.block.body, pos, quat, dt, false);
+      tmpM.decompose(tmpA, tmpQ2, tmpS);
+      this._setKinematic(h.block.body, tmpA, tmpQ2, dt, false);
       return;
     }
     g.min = 0;
     if (g.t >= g.v - 1e-4) return; // only while closing
 
-    const inv = new THREE.Matrix4().copy(arm.tcpNode.matrixWorld).invert();
+    tmpInv.copy(arm.tcpNode.matrixWorld).invert();
     let best = null;
     for (const b of this.blocks) {
-      const bp = b.body.position, bq = b.body.quaternion;
-      const world = new THREE.Matrix4().compose(
-        new THREE.Vector3(bp.x, bp.y, bp.z),
-        new THREE.Quaternion(bq.x, bq.y, bq.z, bq.w),
-        new THREE.Vector3(1, 1, 1)
-      );
-      const rel = inv.clone().multiply(world);
-      const e = rel.elements;
+      const e = this._relTo(b);
       const lx = e[12], ly = e[13], lz = e[14];
       if (Math.abs(lx) > 0.05 || Math.abs(lz) > 0.04 || Math.abs(ly) > 0.05) continue;
 
       // pads touch the block when the half gap reaches its actual extent along the finger axis
-      const hs = [b.half.x, b.half.y, b.half.z];
-      const ext = Math.abs(e[0]) * hs[0] + Math.abs(e[4]) * hs[1] + Math.abs(e[8]) * hs[2];
+      const ext = Math.abs(e[0]) * b.half.x + Math.abs(e[4]) * b.half.y + Math.abs(e[8]) * b.half.z;
       if (ext > ARM.fingerHalfTravel || g.v > ext + 0.002) continue;
 
       // nearest axis-aligned orientation relative to the tool (24 candidates)
@@ -303,20 +342,16 @@ export class Physics {
         if (sc > bestScore) { bestScore = sc; cols = R; }
       }
       let hw = 0;
-      for (let j = 0; j < 3; j++) if (cols[j][0] !== 0) hw = hs[j];
+      if (cols[0][0] !== 0) hw = b.half.x; else if (cols[1][0] !== 0) hw = b.half.y; else hw = b.half.z;
       const d = Math.abs(lx) + Math.abs(lz) + Math.abs(ly);
-      if (!best || d < best.d) best = { b, hw, d, rel, cols, lx, ly, lz };
+      if (!best || d < best.d) { best = { b, hw, d, cols, ly }; bestRel.copy(tmpRel); }
     }
     if (!best) return;
 
-    const snap = new THREE.Matrix4().makeBasis(
-      new THREE.Vector3(...best.cols[0]),
-      new THREE.Vector3(...best.cols[1]),
-      new THREE.Vector3(...best.cols[2])
-    );
-    const p0 = new THREE.Vector3(), q0 = new THREE.Quaternion();
-    best.rel.decompose(p0, q0, new THREE.Vector3());
-    const q1 = new THREE.Quaternion().setFromRotationMatrix(snap);
+    tmpBasis.makeBasis(tmpA.set(...best.cols[0]), tmpB.set(...best.cols[1]), tmpC.set(...best.cols[2]));
+    const p0 = new THREE.Vector3(), q0 = new THREE.Quaternion();   // once per grasp
+    bestRel.decompose(p0, q0, tmpS);
+    const q1 = new THREE.Quaternion().setFromRotationMatrix(tmpBasis);
     const p1 = new THREE.Vector3(0, THREE.MathUtils.clamp(best.ly, -0.03, 0.03), 0);
 
     const body = best.b.body;
@@ -326,6 +361,7 @@ export class Physics {
     body.allowSleep = false;
     body.wakeUp();
     this.held = { block: best.b, hw: best.hw, p0, q0, p1, q1, s: 0 };
+    if (this.onGrasp) this.onGrasp(best.b);
   }
 
   _release() {
@@ -340,6 +376,38 @@ export class Physics {
     const v = body.velocity;
     const sp = v.length();
     if (sp > 1.5) v.scale(1.5 / sp, v);
+    body.linearDamping = SETTLE_LIN;
+    body.angularDamping = SETTLE_ANG;
+    b.settle = SETTLE_TIME;
     this.held = null;
+    if (this.onRelease) this.onRelease(b);
   }
+
+  /**
+   * Which block would a grab pick right now? (visual feedback only)
+   * Returns { block, ready } or null. `ready` means it is inside the grasp zone.
+   */
+  candidate() {
+    if (this.held) return null;
+    this.arm.tcpNode.updateWorldMatrix(true, false);
+    tmpInv.copy(this.arm.tcpNode.matrixWorld).invert();
+    let best = null, bd = 0.2;
+    for (const b of this.blocks) {
+      const e = this._relTo(b);
+      const lx = e[12], ly = e[13], lz = e[14];
+      const d = Math.hypot(lx, ly, lz);
+      if (d >= bd) continue;
+      bd = d;
+      const ext = Math.abs(e[0]) * b.half.x + Math.abs(e[4]) * b.half.y + Math.abs(e[8]) * b.half.z;
+      best = { block: b, ready: Math.abs(lx) < 0.05 && Math.abs(lz) < 0.04 && Math.abs(ly) < 0.05 && ext <= ARM.fingerHalfTravel };
+    }
+    return best;
+  }
+}
+
+function touches(m, body, pad) {
+  const a = m.aabb, c = body.aabb;
+  return a.lowerBound.x - pad < c.upperBound.x && a.upperBound.x + pad > c.lowerBound.x &&
+         a.lowerBound.y - pad < c.upperBound.y && a.upperBound.y + pad > c.lowerBound.y &&
+         a.lowerBound.z - pad < c.upperBound.z && a.upperBound.z + pad > c.lowerBound.z;
 }

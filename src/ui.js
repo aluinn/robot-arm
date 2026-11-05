@@ -1,7 +1,9 @@
-import { ARM, JOINTS } from './config.js';
+import { ARM, JOINTS, REPLAY_SPEEDS as SPEEDS } from './config.js';
+import { SHAPES } from './challenge.js';
 
 const DEG = 180 / Math.PI;
 const GRIP_MAX_MM = ARM.fingerHalfTravel * 2000;
+const MAX_TOWER = 0.68;          // metres: all six blocks stacked, for the meter scale
 
 const el = (tag, cls, html) => {
   const e = document.createElement(tag);
@@ -9,179 +11,79 @@ const el = (tag, cls, html) => {
   if (html !== undefined) e.innerHTML = html;
   return e;
 };
+// Only touch the DOM when a value actually changed (this runs every frame).
+const setText = (e, t) => { if (e._t !== t) { e._t = t; e.textContent = t; } };
+const setClass = (e, c, on) => { if (e._c !== undefined && e._c[c] === on) return; (e._c || (e._c = {}))[c] = on; e.classList.toggle(c, on); };
+const fmtClock = (steps) => {
+  const t = steps / 120;
+  return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+};
+const fmtTime = (s) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`;
 
 export class UI {
   constructor({ root, arm, rec, actions }) {
     this.root = root;
-    this.rec = rec;
     this.arm = arm;
+    this.rec = rec;
     this.actions = actions;
     this.rows = [];
     this.dragging = -1;
+    this.shape = 'tower';
+    this.cards = [];
 
-    // ----- main panel -----
+    this._buildPanel();
+    const col = el('div', 'col');
+    root.append(col);
+    this.col = col;
+    this._buildToolbar(col);
+    this._buildCameraSeg(col);
+    this._buildRecorder(col);
+    this._buildChallenge(col);
+    this._buildHint();
+    this._buildSuccess();
+
+    // Start with the cards that fit: everything folded on phones, the challenge folded on short screens.
+    const phone = window.matchMedia('(max-width: 760px)').matches;
+    const short = window.innerHeight < 800;
+    this.recCard.set(!phone);
+    this.chalCard.set(!phone && !short);
+    this.setMode('cartesian');
+  }
+
+  /* ---------- main panel ---------- */
+
+  _buildPanel() {
+    const { actions, arm } = this;
     const panel = el('section', 'glass panel');
-    this.seg = el('div', 'seg');
+    const seg = el('div', 'seg');
     this.btnCart = el('button', 'on', 'Cartesian');
     this.btnJoint = el('button', '', 'Joints');
     this.btnCart.onclick = () => actions.setMode('cartesian');
     this.btnJoint.onclick = () => actions.setMode('joints');
-    this.seg.append(this.btnCart, this.btnJoint);
-    panel.append(this.seg);
+    seg.append(this.btnCart, this.btnJoint);
+    panel.append(seg);
 
     this.sliders = el('div', 'sliders');
     JOINTS.forEach((j, i) => this._addRow(j.label, j.min * DEG, j.max * DEG, 0.1, (v) => arm.setJointTarget(i, v / DEG), i));
-    this._addRow('Gripper', 0, GRIP_MAX_MM, 0.5, (v) => { actions.setGripper(v / 2000); }, JOINTS.length, true);
+    this._addRow('Gripper', 0, GRIP_MAX_MM, 0.5, (v) => actions.setGripper(v / 2000), JOINTS.length, true);
     panel.append(this.sliders);
 
-    this.tcp = el('div', 'tcp');
+    this.tcp = el('div', 'tcp', '<span>X <b></b></span><span>Y <b></b></span><span>Z <b></b></span><i>mm</i>');
+    this.tcpVals = [...this.tcp.querySelectorAll('b')];
     panel.append(this.tcp);
-    root.append(panel);
+
+    // tower height meter + stacked counter
+    this.stats = el('div', 'stats', `
+      <div class="stat"><span>Tower</span><b class="th">0 mm</b></div>
+      <div class="stat"><span>Blocks stacked</span><b class="sk">0</b></div>
+      <div class="meter"><i></i></div>`);
+    this.thEl = this.stats.querySelector('.th');
+    this.skEl = this.stats.querySelector('.sk');
+    this.meterEl = this.stats.querySelector('.meter i');
+    panel.append(this.stats);
+
+    this.root.append(panel);
     this.panel = panel;
-
-    // ----- toolbar -----
-    const bar = el('div', 'glass bar');
-    this.btnOrbit = this._tool(bar, 'Orbit', 'O', actions.toggleOrbit);
-    this._tool(bar, 'Reset', 'X', actions.reset);
-    this.btnHint = this._tool(bar, 'Keys', '/', actions.toggleHint);
-    this.btnHint.classList.add('keys');
-    this._tool(bar, 'Clean', 'H', actions.toggleClean);
-    root.append(bar);
-    this.bar = bar;
-
-    // ----- hint -----
-    const hint = el('aside', 'glass hint');
-    hint.innerHTML = `
-      <div class="hcol" data-mode="cartesian">
-        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move on table</span></div>
-        <div><kbd>R</kbd><kbd>F</kbd><span>Raise / lower</span></div>
-        <div><kbd>Q</kbd><kbd>E</kbd><span>Rotate wrist</span></div>
-      </div>
-      <div class="hcol">
-        <div><kbd>Space</kbd><span>Open / close gripper</span></div>
-        <div><kbd>Shift</kbd><span>Fine motion</span></div>
-        <div><kbd>M</kbd><span>Cartesian / Joints</span></div>
-      </div>
-      <div class="hcol">
-        <div><kbd>O</kbd><span>Auto-orbit</span></div>
-        <div><kbd>X</kbd><span>Reset scene</span></div>
-        <div><kbd>H</kbd><span>Clean mode</span></div>
-      </div>
-      <div class="hcol">
-        <div><kbd>C</kbd><span>Record / stop</span></div>
-        <div><kbd>P</kbd><span>Autopilot / pause</span></div>
-        <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><span>Speed</span></div>
-      </div>`;
-    root.append(hint);
-    this.hint = hint;
-
-    this._buildRecorder(root, actions);
-    this.setMode('cartesian');
-  }
-
-  _buildRecorder(root, actions) {
-    const box = el('section', 'glass rec');
-    const head = el('div', 'rec-head');
-    this.stateEl = el('span', 'state idle', '<i></i><b>Idle</b>');
-    this.timeEl = el('span', 'time', '0:00');
-    head.append(this.stateEl, this.timeEl);
-
-    const btns = el('div', 'rec-btns');
-    const mk = (cls, html, fn) => {
-      const b = el('button', cls, html);
-      b.onclick = () => { fn(); b.blur(); };
-      btns.append(b);
-      return b;
-    };
-    this.btnRec = mk('rb rb-rec', '<i></i>Record <kbd>C</kbd>', actions.record);
-    this.btnAuto = mk('rb', 'Autopilot <kbd>P</kbd>', () => (this.rec.replaying ? actions.stopReplay() : actions.autopilot()));
-    this.btnReset = mk('rb', 'Reset scene <kbd>X</kbd>', actions.reset);
-
-    const scrub = el('div', 'scrub');
-    this.btnPause = el('button', 'pp', 'Pause');
-    this.btnPause.onclick = () => { actions.autopilot(); this.btnPause.blur(); };
-    this.scrub = el('input');
-    this.scrub.type = 'range'; this.scrub.min = 0; this.scrub.max = 1; this.scrub.step = 1; this.scrub.value = 0;
-    this.scrub.oninput = () => actions.seek(parseInt(this.scrub.value, 10));
-    this.scrub.onpointerdown = () => { this.scrubbing = true; };
-    const endScrub = () => { this.scrubbing = false; this.scrub.blur(); };
-    this.scrub.onpointerup = endScrub;
-    this.scrub.onpointercancel = endScrub;
-    scrub.append(this.btnPause, this.scrub);
-
-    const opts = el('div', 'rec-opts');
-    this.speedSeg = el('div', 'seg speed');
-    this.speedBtns = [0.5, 1, 2, 4].map((v) => {
-      const b = el('button', '', `${v}\u00d7`);
-      b.onclick = () => { actions.setSpeed(v); b.blur(); };
-      this.speedSeg.append(b);
-      return { v, b };
-    });
-    this.btnTrail = el('button', 'tool', 'Trail <kbd>T</kbd>');
-    this.btnTrail.onclick = () => { actions.toggleTrail(); this.btnTrail.blur(); };
-    opts.append(this.speedSeg, this.btnTrail);
-
-    const io = el('div', 'rec-io');
-    const small = (label, fn) => { const b = el('button', 'tool', label); b.onclick = () => { fn(); b.blur(); }; io.append(b); return b; };
-    this.btnExport = small('Export', actions.exportJSON);
-    const file = el('input');
-    file.type = 'file'; file.accept = 'application/json,.json'; file.hidden = true;
-    file.onchange = () => { if (file.files[0]) actions.importFile(file.files[0]); file.value = ''; };
-    small('Import', () => file.click());
-    this.btnClear = small('Clear', actions.clearRecording);
-    this.note = el('div', 'note');
-
-    box.append(head, btns, scrub, opts, io, this.note, file);
-    root.append(box);
-    this.recBox = box;
-  }
-
-  notify(text, kind = '') {
-    this.note.textContent = text;
-    this.note.className = 'note ' + kind;
-  }
-
-  _fmt(steps) {
-    const t = steps / 120;
-    return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-  }
-
-  _updateRecorder() {
-    const r = this.rec;
-    const rec = r.recording, rep = r.replaying;
-    const label = rec ? 'Recording' : rep ? (r.paused ? 'Paused' : 'Replaying') : 'Idle';
-    this.stateEl.className = 'state ' + (rec ? 'rec' : rep ? 'play' : 'idle');
-    this.stateEl.lastChild.textContent = label;
-    const total = rec ? r.step : r.totalSteps;
-    this.timeEl.textContent = `${this._fmt(r.step)} / ${this._fmt(total)}`;
-
-    this.btnRec.classList.toggle('on', rec);
-    this.btnRec.firstChild.nextSibling.textContent = rec ? 'Stop ' : 'Record ';
-    this.btnRec.disabled = rep;
-    this.btnAuto.disabled = rec || !r.hasData;
-    this.btnAuto.firstChild.textContent = rep ? 'Stop ' : 'Autopilot ';
-    this.btnReset.disabled = false;
-
-    this.btnPause.style.visibility = rep ? 'visible' : 'hidden';
-    this.btnPause.textContent = r.paused ? 'Play' : 'Pause';
-
-    this.scrub.disabled = rec || !r.hasData;
-    this.scrub.max = Math.max(1, total);
-    if (!this.scrubbing) this.scrub.value = r.step;
-    this.scrub.style.setProperty('--p', `${(100 * r.step / Math.max(1, total)).toFixed(1)}%`);
-
-    this.speedBtns.forEach(({ v, b }) => b.classList.toggle('on', v === r.speed));
-    this.btnExport.disabled = !r.hasData;
-    this.btnClear.disabled = !r.hasData || rec || rep;
-    this.recBox.classList.toggle('locked-rep', rep);
-    this.panel.classList.toggle('locked', rep);
-  }
-
-  _tool(parent, label, key, fn) {
-    const b = el('button', 'tool', `${label}<kbd>${key}</kbd>`);
-    b.onclick = () => { fn(); b.blur(); };
-    parent.append(b);
-    return b;
   }
 
   _addRow(label, min, max, step, onInput, i, isGrip = false) {
@@ -201,6 +103,207 @@ export class UI {
     this.rows.push({ input, val, isGrip, min, max });
   }
 
+  /* ---------- right column ---------- */
+
+  _tool(parent, label, key, fn, cls = '') {
+    const b = el('button', 'tool ' + cls, `${label}<kbd>${key}</kbd>`);
+    b.onclick = () => { fn(); b.blur(); };
+    parent.append(b);
+    return b;
+  }
+
+  _buildToolbar(col) {
+    const { actions } = this;
+    const bar = el('div', 'glass bar');
+    this.btnOrbit = this._tool(bar, 'Orbit', 'O', actions.toggleOrbit);
+    this._tool(bar, 'Reset', 'X', actions.reset);
+    this.btnSound = this._tool(bar, 'Sound', 'K', actions.toggleSound);
+    this._tool(bar, 'Keys', '/', actions.toggleHint, 'keys');
+    this._tool(bar, 'Clean', 'H', actions.toggleClean);
+    col.append(bar);
+    this.btnHint = bar.querySelector('.keys');
+  }
+
+  _buildCameraSeg(col) {
+    const seg = el('div', 'glass seg cams');
+    this.presetBtns = [['front', 'Front', 1], ['top', 'Top', 2], ['hero', 'Hero', 3]].map(([name, label, k]) => {
+      const b = el('button', '', `${label}<kbd>${k}</kbd>`);
+      b.onclick = () => { this.actions.setPreset(name); b.blur(); };
+      seg.append(b);
+      return { name, b };
+    });
+    col.append(seg);
+  }
+
+  /** Collapsible card. On phones only one card stays open so they never stack up. */
+  _card(cls, title) {
+    const root = el('section', 'glass card ' + cls);
+    const head = el('button', 'card-head', '<span class="ct"></span><span class="cs"></span><i class="chev"></i>');
+    head.querySelector('.ct').textContent = title;
+    const body = el('div', 'card-body');
+    root.append(head, body);
+    const card = {
+      root, body, summary: head.querySelector('.cs'),
+      set: (open) => { root.classList.toggle('collapsed', !open); card.open = open; this._syncCardsOpen(); },
+      open: true,
+    };
+    head.onclick = () => {
+      const open = !card.open;
+      if (open && window.matchMedia('(max-width: 760px)').matches) this.cards.forEach((c) => c !== card && c.set(false));
+      card.set(open);
+      head.blur();
+    };
+    this.cards.push(card);
+    return card;
+  }
+
+  _syncCardsOpen() {
+    this.root.classList.toggle('card-open', this.cards.some((c) => c.open));
+    if (this.onLayout) this.onLayout();
+  }
+
+  _buildRecorder(col) {
+    const { actions } = this;
+    const card = this.recCard = this._card('rec', 'Recorder');
+    const body = card.body;
+
+    this.stateEl = el('div', 'state idle', '<i></i><b>Idle</b><span class="time">0:00 / 0:00</span>');
+    this.stateLbl = this.stateEl.querySelector('b');
+    this.timeEl = this.stateEl.querySelector('.time');
+
+    const btns = el('div', 'rec-btns');
+    const mk = (cls, label, key, fn) => {
+      const b = el('button', cls, `<i></i><span class="lbl">${label}</span><kbd>${key}</kbd>`);
+      b.onclick = () => { fn(); b.blur(); };
+      btns.append(b);
+      return b;
+    };
+    this.btnRec = mk('rb rb-rec', 'Record', 'C', actions.record);
+    this.btnAuto = mk('rb', 'Autopilot', 'P', () => (this.rec.replaying ? actions.stopReplay() : actions.autopilot()));
+    this.btnReset = mk('rb', 'Reset scene', 'X', actions.reset);
+    this.lblRec = this.btnRec.querySelector('.lbl');
+    this.lblAuto = this.btnAuto.querySelector('.lbl');
+
+    const scrub = el('div', 'scrub');
+    this.btnPause = el('button', 'pp', 'Pause');
+    this.btnPause.onclick = () => { actions.autopilot(); this.btnPause.blur(); };
+    this.scrub = el('input');
+    this.scrub.type = 'range'; this.scrub.min = 0; this.scrub.max = 1; this.scrub.step = 1; this.scrub.value = 0;
+    this.scrub.oninput = () => actions.seek(parseInt(this.scrub.value, 10));
+    this.scrub.onpointerdown = () => { this.scrubbing = true; };
+    const endScrub = () => { this.scrubbing = false; this.scrub.blur(); };
+    this.scrub.onpointerup = endScrub;
+    this.scrub.onpointercancel = endScrub;
+    scrub.append(this.btnPause, this.scrub);
+
+    const opts = el('div', 'rec-opts');
+    const speed = el('div', 'seg speed');
+    this.speedBtns = SPEEDS.map((v) => {
+      const b = el('button', '', `${v}×`);
+      b.onclick = () => { actions.setSpeed(v); b.blur(); };
+      speed.append(b);
+      return { v, b };
+    });
+    this.btnTrail = this._tool(opts, 'Trail', 'T', actions.toggleTrail);
+    opts.prepend(speed);
+
+    const io = el('div', 'rec-io');
+    const small = (label, fn) => { const b = el('button', 'tool', label); b.onclick = () => { fn(); b.blur(); }; io.append(b); return b; };
+    this.btnExport = small('Export', actions.exportJSON);
+    const file = el('input');
+    file.type = 'file'; file.accept = 'application/json,.json'; file.hidden = true;
+    file.onchange = () => { if (file.files[0]) actions.importFile(file.files[0]); file.value = ''; };
+    small('Import', () => file.click());
+    this.btnClear = small('Clear', actions.clearRecording);
+    this.note = el('div', 'note');
+
+    body.append(this.stateEl, btns, scrub, opts, io, this.note, file);
+    col.append(card.root);
+  }
+
+  _buildChallenge(col) {
+    const { actions } = this;
+    const card = this.chalCard = this._card('chal', 'Challenge');
+    const body = card.body;
+
+    const pick = el('div', 'seg shapes');
+    this.shapeBtns = Object.entries(SHAPES).map(([key, s]) => {
+      const b = el('button', key === this.shape ? 'on' : '', s.label);
+      b.onclick = () => { this.shape = key; this.shapeBtns.forEach((x) => x.b.classList.toggle('on', x.key === key)); b.blur(); };
+      pick.append(b);
+      return { key, b };
+    });
+
+    const btns = el('div', 'chal-btns');
+    this.btnStart = el('button', 'rb', 'Start');
+    this.btnStart.onclick = () => { actions.startChallenge(this.shape); this.btnStart.blur(); };
+    this.btnStop = el('button', 'rb', 'Cancel');
+    this.btnStop.onclick = () => { actions.cancelChallenge(); this.btnStop.blur(); };
+    btns.append(this.btnStart, this.btnStop);
+
+    this.chalStats = el('div', 'chal-stats', `
+      <div><span>Time</span><b class="ct1">0:00.0</b></div>
+      <div><span>Matched</span><b class="cm">–</b></div>
+      <div><span>Best</span><b class="cb">–</b></div>`);
+    this.ctEl = this.chalStats.querySelector('.ct1');
+    this.cmEl = this.chalStats.querySelector('.cm');
+    this.cbEl = this.chalStats.querySelector('.cb');
+    this.chalNote = el('div', 'note', 'Build the ghost shape with the blocks.');
+
+    body.append(pick, btns, this.chalStats, this.chalNote);
+    col.append(card.root);
+  }
+
+  _buildHint() {
+    const hint = el('aside', 'glass hint');
+    hint.innerHTML = `
+      <div class="hcol" data-mode="cartesian">
+        <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Move on table</span></div>
+        <div><kbd>R</kbd><kbd>F</kbd><span>Raise / lower</span></div>
+        <div><kbd>Q</kbd><kbd>E</kbd><span>Rotate wrist</span></div>
+      </div>
+      <div class="hcol">
+        <div><kbd>Space</kbd><span>Open / close gripper</span></div>
+        <div><kbd>Shift</kbd><span>Fine motion</span></div>
+        <div><kbd>M</kbd><span>Cartesian / Joints</span></div>
+      </div>
+      <div class="hcol">
+        <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><span>Camera presets</span></div>
+        <div><kbd>O</kbd><span>Auto-orbit</span></div>
+        <div><kbd>K</kbd><span>Sound</span></div>
+      </div>
+      <div class="hcol">
+        <div><kbd>C</kbd><span>Record / stop</span></div>
+        <div><kbd>P</kbd><span>Autopilot / pause</span></div>
+        <div><kbd>[</kbd><kbd>]</kbd><span>Replay speed</span></div>
+      </div>
+      <div class="hcol">
+        <div><kbd>X</kbd><span>Reset scene</span></div>
+        <div><kbd>T</kbd><span>Replay trail</span></div>
+        <div><kbd>H</kbd><span>Clean mode</span></div>
+      </div>`;
+    this.root.append(hint);
+    this.hint = hint;
+  }
+
+  _buildSuccess() {
+    const box = el('div', 'success hidden');
+    box.innerHTML = `
+      <div class="glass sc">
+        <div class="check"><svg viewBox="0 0 24 24" width="26" height="26"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h2>Challenge complete</h2>
+        <div class="stime"></div>
+        <div class="ssub"></div>
+        <div class="sbtns"><button class="rb again">Again</button><button class="rb close">Done</button></div>
+      </div>`;
+    box.querySelector('.again').onclick = () => this.actions.startChallenge(this.shape);
+    box.querySelector('.close').onclick = () => this.actions.cancelChallenge();
+    this.root.append(box);
+    this.success = box;
+  }
+
+  /* ---------- state setters ---------- */
+
   setMode(mode) {
     const joints = mode === 'joints';
     this.btnCart.classList.toggle('on', !joints);
@@ -209,28 +312,103 @@ export class UI {
     this.hint.classList.toggle('joints', joints);
   }
 
-  setTrail(on) { this.btnTrail.classList.toggle('active', on); }
   setOrbit(on) { this.btnOrbit.classList.toggle('active', on); }
+  setTrail(on) { this.btnTrail.classList.toggle('active', on); }
+  setSound(on) { this.btnSound.classList.toggle('active', on); }
   setHint(visible) { this.hint.classList.toggle('hidden', !visible); this.btnHint.classList.toggle('active', visible); }
   setClean(clean) { this.root.classList.toggle('clean', clean); }
+  setPreset(name) { this.presetBtns.forEach(({ name: n, b }) => b.classList.toggle('on', n === name)); }
 
-  update() {
-    const arm = this.arm;
-    const joints = arm.mode === 'joints';
+  notify(text, kind = '') {
+    this.note.textContent = text;
+    this.note.className = 'note ' + kind;
+  }
+
+  setShape(key) { this.shape = key; this.shapeBtns.forEach((x) => x.b.classList.toggle('on', x.key === key)); }
+
+  chalMsg(text) { this.chalNote.textContent = text; }
+
+  showSuccess({ label, time, best, newBest }) {
+    const s = this.success;
+    s.querySelector('.stime').textContent = fmtTime(time);
+    s.querySelector('.ssub').textContent = newBest ? `${label} · new best` : `${label} · best ${fmtTime(best)}`;
+    s.classList.remove('hidden');
+  }
+  hideSuccess() { this.success.classList.add('hidden'); }
+
+  /* ---------- per frame ---------- */
+
+  update(stack, chal) {
+    const arm = this.arm, joints = arm.mode === 'joints';
+
     this.rows.forEach((r, i) => {
-      const isGrip = r.isGrip;
-      const cur = isGrip ? arm.grip.v * 2000 : arm.q[i].v * DEG;
-      const tgt = isGrip ? arm.grip.t * 2000 : arm.q[i].t * DEG;
-      r.val.textContent = isGrip ? `${cur.toFixed(0)} mm` : `${cur.toFixed(1)}°`;
-      if (this.dragging !== i) r.input.value = joints ? tgt : cur;
-      const p = (parseFloat(r.input.value) - r.min) / (r.max - r.min);
-      r.input.style.setProperty('--p', `${(p * 100).toFixed(1)}%`);
+      const cur = r.isGrip ? arm.grip.v * 2000 : arm.q[i].v * DEG;
+      const tgt = r.isGrip ? arm.grip.t * 2000 : arm.q[i].t * DEG;
+      setText(r.val, r.isGrip ? `${cur.toFixed(0)} mm` : `${cur.toFixed(1)}°`);
+      if (this.dragging !== i) {
+        const v = joints ? tgt : cur;
+        if (r.last !== v) { r.last = v; r.input.value = v; r.input.style.setProperty('--p', `${(100 * (v - r.min) / (r.max - r.min)).toFixed(1)}%`); }
+      }
     });
-    this._updateRecorder();
+
     const f = arm.forward();
-    this.tcp.innerHTML =
-      `<span>X <b>${(f.pos.x * 1000).toFixed(0)}</b></span>` +
-      `<span>Y <b>${(f.pos.z * 1000).toFixed(0)}</b></span>` +
-      `<span>Z <b>${(f.pos.y * 1000).toFixed(0)}</b></span><i>mm</i>`;
+    setText(this.tcpVals[0], (f.pos.x * 1000).toFixed(0));
+    setText(this.tcpVals[1], (f.pos.z * 1000).toFixed(0));
+    setText(this.tcpVals[2], (f.pos.y * 1000).toFixed(0));
+
+    setText(this.thEl, `${(stack.height * 1000).toFixed(0)} mm`);
+    setText(this.skEl, String(stack.stacked));
+    const w = `${Math.min(100, 100 * stack.height / MAX_TOWER).toFixed(0)}%`;
+    if (this.meterEl._w !== w) { this.meterEl._w = w; this.meterEl.style.width = w; }
+
+    this._updateRecorder();
+    this._updateChallenge(chal);
+  }
+
+  _updateRecorder() {
+    const r = this.rec;
+    const rec = r.recording, rep = r.replaying;
+    const label = rec ? 'Recording' : rep ? (r.paused ? 'Paused' : 'Replaying') : 'Idle';
+    const kind = rec ? 'rec' : rep ? 'play' : 'idle';
+    if (this.stateEl._k !== kind) { this.stateEl._k = kind; this.stateEl.className = 'state ' + kind; }
+    setText(this.stateLbl, label);
+    const total = rec ? r.step : r.totalSteps;
+    const clock = `${fmtClock(r.step)} / ${fmtClock(total)}`;
+    setText(this.timeEl, clock);
+    setText(this.recCard.summary, rec || rep ? `${label} ${fmtClock(r.step)}` : r.hasData ? fmtClock(total) : '');
+
+    setClass(this.btnRec, 'on', rec);
+    setText(this.lblRec, rec ? 'Stop' : 'Record');
+    this.btnRec.disabled = rep;
+    this.btnAuto.disabled = rec || !r.hasData;
+    setText(this.lblAuto, rep ? 'Stop' : 'Autopilot');
+
+    this.btnPause.style.visibility = rep ? 'visible' : 'hidden';
+    setText(this.btnPause, r.paused ? 'Play' : 'Pause');
+
+    this.scrub.disabled = rec || !r.hasData;
+    const max = Math.max(1, total);
+    if (this.scrub._max !== max) { this.scrub._max = max; this.scrub.max = max; }
+    if (!this.scrubbing && this.scrub._v !== r.step) { this.scrub._v = r.step; this.scrub.value = r.step; }
+    const p = `${(100 * r.step / max).toFixed(1)}%`;
+    if (this.scrub._p !== p) { this.scrub._p = p; this.scrub.style.setProperty('--p', p); }
+
+    this.speedBtns.forEach(({ v, b }) => setClass(b, 'on', v === r.speed));
+    this.btnExport.disabled = !r.hasData;
+    this.btnClear.disabled = !r.hasData || rec || rep;
+    this.panel.classList.toggle('locked', rep);
+  }
+
+  _updateChallenge(c) {
+    const active = c.active;
+    this.btnStop.disabled = !active;
+    setText(this.btnStart, active ? 'Restart' : 'Start');
+    setText(this.ctEl, fmtTime(c.time));
+    setText(this.cmEl, active ? `${c.matched}/${c.total}` : '–');
+    const best = c.bestTime;
+    setText(this.cbEl, best === undefined ? '–' : fmtTime(best));
+    setText(this.chalCard.summary, active ? `${fmtTime(c.time)} · ${c.matched}/${c.total}` : '');
+    setClass(this.chalCard.root, 'running', active && !c.done);
+    setClass(this.chalCard.root, 'complete', c.done);
   }
 }
