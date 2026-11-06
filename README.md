@@ -2,6 +2,9 @@
 
 A browser-based 3D simulator of a 6-axis industrial arm with a parallel gripper, inverse kinematics, and rigid-body physics.
 
+https://github.com/user-attachments/assets/3380dcb3-bd34-4100-9e67-847a25f77559
+
+
 ## Run
 
 ```sh
