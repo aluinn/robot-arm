@@ -21,7 +21,7 @@
     "start": "node scripts/serve.mjs",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --test tests/unit/",
+    "test": "node --test tests/unit/*.test.js",
     "test:e2e": "playwright test",
     "build": "node scripts/build.mjs",
     "screenshots": "node scripts/screenshots.mjs",

@@ -9,3 +9,6 @@ npm-debug.log*
 *.swp
 *.swo
 .claude/
+dist/
+test-results/
+playwright-report/
