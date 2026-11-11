@@ -1,0 +1,39 @@
+{
+  "name": "robot-arm",
+  "version": "0.1.0",
+  "description": "Browser-based 3D simulator of a 6-axis industrial arm with inverse kinematics, rigid-body physics, record/replay and an auto-builder.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "author": "Aluinn McDonald",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aluinn/robot-arm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aluinn/robot-arm/issues"
+  },
+  "homepage": "https://github.com/aluinn/robot-arm#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test tests/unit/",
+    "test:e2e": "playwright test",
+    "build": "node scripts/build.mjs",
+    "screenshots": "node scripts/screenshots.mjs",
+    "bench": "node scripts/bench.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.0",
+    "@types/three": "^0.170.0",
+    "cannon-es": "^0.20.0",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
+    "typescript": "^7.0.2"
+  }
+}
