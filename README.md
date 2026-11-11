@@ -10,11 +10,8 @@
 [![GitHub stars](https://img.shields.io/github/stars/aluinn/robot-arm?style=flat)](https://github.com/aluinn/robot-arm/stargazers)
 [![Deploy: GitHub Pages](https://img.shields.io/badge/deploy-GitHub%20Pages-222?logo=github)](#deploy)
 
-<!--
-  HERO PLACEHOLDER: replace the image below with a short screen recording (GIF or MP4) of Auto-Build
-  stacking the pyramid, e.g. docs/assets/demo.gif, then update the <img> src.
--->
-<img src="docs/assets/screenshot-autobuild-progress.png" alt="The arm placing the fifth of six blocks while building a pyramid" width="860">
+<!-- Hero: demo recording uploaded to GitHub (user-attachments). Screenshot fallback: docs/assets/screenshot-autobuild-progress.png -->
+https://github.com/user-attachments/assets/3380dcb3-bd34-4100-9e67-847a25f77559
 
 [Live demo](https://aluinn.github.io/robot-arm/) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md)
 
