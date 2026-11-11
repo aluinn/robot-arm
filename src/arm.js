@@ -217,6 +217,7 @@ export class Arm {
     this.rollG.add(this.tcpNode);
 
     this.group.traverse((o) => {
+      // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
       if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
     });
   }
@@ -371,6 +372,7 @@ export class Arm {
     [this.grip.v, this.grip.vel, this.grip.t, this.grip.min] = s.grip;
     this.target.pos.set(s.target[0], s.target[1], s.target[2]);
     this.target.yaw = s.target[3];
+    // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
     this._lastValid.pos.set(...s.lastValid);
     this._tiltSign = s.tilt;
     this.mode = s.mode;

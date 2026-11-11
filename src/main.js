@@ -271,6 +271,7 @@ ui.setHint(true);
 // No keyboard on touch devices: start with the slider panel driving the arm.
 if (window.matchMedia('(pointer: coarse)').matches) actions.setMode('joints');
 
+// @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
 if (new URLSearchParams(location.search).has('debug')) window.__app = { structures: STRUCTURES, site: SITE, build, buildGhost, renderer, arm, physics, input, camera, controls, scene, THREE, rec, actions, challenge, sound, rig, analyzeStacks, simStep: () => simStep(), restoreScene, captureScene, home };
 
 // Keep the arm centred in the free area between the panels (matters on portrait screens).
@@ -279,6 +280,7 @@ function layoutView() {
   const bottom = ui.col.getBoundingClientRect().top;
   setViewBand(top, bottom > top ? bottom : window.innerHeight);
 }
+// @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
 ui.onLayout = layoutView;
 window.addEventListener('resize', layoutView);
 layoutView();
@@ -323,7 +325,7 @@ function syncVisuals() {
     const p = b.body.position, q = b.body.quaternion;
     b.mesh.position.set(p.x, p.y, p.z);
     b.mesh.quaternion.set(q.x, q.y, q.z, q.w);
-    const [w, h, d] = b.spec.size;
+    const h = b.spec.size[1];
     const clearance = Math.max(0, p.y - h / 2);
     b.blob.position.x = p.x;
     b.blob.position.z = p.z;

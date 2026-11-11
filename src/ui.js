@@ -46,7 +46,6 @@ export class UI {
 
     // Start with the cards that fit: everything folded on phones, the challenge folded on short screens.
     const phone = window.matchMedia('(max-width: 760px)').matches;
-    const short = window.innerHeight < 800;
     const tall = window.innerHeight >= 900;
     this.recCard.set(!phone && window.innerHeight >= 520);
     this.chalCard.set(!phone && tall);
@@ -163,6 +162,7 @@ export class UI {
 
   _syncCardsOpen() {
     this.root.classList.toggle('card-open', this.cards.some((c) => c.open));
+    // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
     if (this.onLayout) this.onLayout();
   }
 

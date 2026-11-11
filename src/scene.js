@@ -165,7 +165,9 @@ class CameraRig {
     c.autoRotate = false;
     this._fromT.copy(c.target);
     this._fromS.setFromVector3(this._v.copy(this.camera.position).sub(c.target));
+    // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
     this._toT.set(...p.target);
+    // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
     this._toS.setFromVector3(this._v.set(...p.pos).sub(this._toT));
     this._t = 0;
     this._dur = duration;

@@ -14,6 +14,7 @@ export class Sound {
     if (!on) return;
     try {
       if (!this.ctx) {
+        // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
         const AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) { this.enabled = false; return; }
         this.ctx = new AC();

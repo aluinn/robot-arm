@@ -119,7 +119,9 @@ export class Physics {
     const w = this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.81, 0) });
     w.broadphase = new CANNON.SAPBroadphase(w);
     w.allowSleep = true;
+    // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
     w.solver.iterations = 30;
+    // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
     w.solver.tolerance = 1e-5;
 
     const mBlock = new CANNON.Material('block');
@@ -158,6 +160,7 @@ export class Physics {
     this.kinFingers = [kin(FINGER_HALF), kin(FINGER_HALF)];
     this.kinPalm = kin(PALM_HALF);
     this._tools = [...this.kinFingers, this.kinPalm];
+    // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
     this._tools.forEach((t) => { t.isTool = true; });
 
     // Blocks (state === null -> the default layout)
@@ -170,9 +173,13 @@ export class Physics {
       });
       const st = state && state[i];
       if (st) {
+        // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
         body.position.set(...st.p);
+        // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
         body.quaternion.set(...st.q);
+        // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
         body.velocity.set(...st.v);
+        // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
         body.angularVelocity.set(...st.w);
       } else {
         body.position.set(s.x, s.size[1] / 2 + 0.0008, s.z);
@@ -236,6 +243,7 @@ export class Physics {
     if (!busy) {
       const cs = this.world.contacts;
       for (let i = 0; i < cs.length; i++) {
+        // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
         if (cs[i].bi.isTool || cs[i].bj.isTool) { busy = true; break; }
       }
     }
@@ -354,13 +362,14 @@ export class Physics {
         for (let j = 0; j < 3; j++) sc += R[j][0] * e[j * 4] + R[j][1] * e[j * 4 + 1] + R[j][2] * e[j * 4 + 2];
         if (sc > bestScore) { bestScore = sc; cols = R; }
       }
-      let hw = 0;
+      let hw;
       if (cols[0][0] !== 0) hw = b.half.x; else if (cols[1][0] !== 0) hw = b.half.y; else hw = b.half.z;
       const d = Math.abs(lx) + Math.abs(lz) + Math.abs(ly);
       if (!best || d < best.d) { best = { b, hw, d, cols, ly }; bestRel.copy(tmpRel); }
     }
     if (!best) return;
 
+    // @ts-expect-error untyped JS (checkJs): array spread / ad-hoc property
     tmpBasis.makeBasis(tmpA.set(...best.cols[0]), tmpB.set(...best.cols[1]), tmpC.set(...best.cols[2]));
     const p0 = new THREE.Vector3(), q0 = new THREE.Quaternion();   // once per grasp
     bestRel.decompose(p0, q0, tmpS);
