@@ -12,7 +12,7 @@ Ideas, roughly in priority order. Nothing here is a promise; open an issue to di
 ## Later
 
 - Gamepad input ([draft](docs/issues/06-gamepad-input.md)) and touch drag of the target ([draft](docs/issues/10-touch-drag-target.md)).
-- Elbow-down IK solution as an option ([draft](docs/issues/07-elbow-down-ik.md)).
+- Reachable-workspace overlay ([draft](docs/issues/07-reach-envelope-overlay.md)).
 - Auto-Build that can right a block lying on its side ([draft](docs/issues/08-autobuild-lying-blocks.md)).
 - Remember UI preferences across visits ([draft](docs/issues/04-persist-ui-preferences.md)).
 

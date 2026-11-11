@@ -124,7 +124,7 @@ Drafts are in [docs/issues](docs/issues); copy one into a GitHub issue to start.
 | [Remember UI preferences](docs/issues/04-persist-ui-preferences.md) | good first issue |
 | [Accessible labels for controls](docs/issues/05-accessible-controls.md) | good first issue |
 | [Gamepad input](docs/issues/06-gamepad-input.md) | enhancement |
-| [Elbow-down IK solution](docs/issues/07-elbow-down-ik.md) | enhancement |
+| [Show the reachable workspace as an overlay](docs/issues/07-reach-envelope-overlay.md) | enhancement |
 | [Auto-Build with blocks lying on their side](docs/issues/08-autobuild-lying-blocks.md) | enhancement |
 | [Vendor dependencies for offline use](docs/issues/09-vendor-dependencies-offline.md) | enhancement |
 | [Drag the target on touch screens](docs/issues/10-touch-drag-target.md) | enhancement |
