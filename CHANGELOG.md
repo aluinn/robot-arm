@@ -20,7 +20,7 @@ All notable changes to this project are documented here. The format follows
 Initial version, as developed before the project was prepared for open-source release.
 
 ### Added
-- 6-axis arm with parallel gripper, closed-form inverse kinematics and critically damped joint motion.
+- Five-joint arm with parallel gripper, closed-form inverse kinematics and critically damped joint motion.
 - cannon-es rigid-body physics at a fixed 120 Hz step, with a locked-grasp model.
 - Tower and Pyramid challenges with ghost targets, timer and stored best times.
 - Record and Autopilot with deterministic replay, timeline scrubbing, speed control and JSON export/import.

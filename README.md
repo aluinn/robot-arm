@@ -2,7 +2,7 @@
 
 # Robot Arm Simulator
 
-**A 6-axis industrial arm in your browser: inverse kinematics, rigid-body physics, exact record/replay, and an auto-builder that stacks blocks by itself.**
+**An industrial-style robot arm in your browser: inverse kinematics, rigid-body physics, exact record/replay, and an auto-builder that stacks blocks by itself.**
 
 [![CI](https://github.com/aluinn/robot-arm/actions/workflows/ci.yml/badge.svg)](https://github.com/aluinn/robot-arm/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/aluinn/robot-arm/actions/workflows/codeql.yml/badge.svg)](https://github.com/aluinn/robot-arm/actions/workflows/codeql.yml)
@@ -22,7 +22,7 @@
 
 ## Features
 
-- **6-axis arm with a parallel gripper**, driven from the keyboard in Cartesian mode (move the gripper target) or Joints mode (sliders per joint).
+- **Five-joint arm with a parallel gripper**, driven from the keyboard in Cartesian mode (move the gripper target) or Joints mode (sliders per joint).
 - **Closed-form inverse kinematics** with joint limits, wrist-roll selection that never spins the long way round, and workspace-edge sliding when a target is out of reach.
 - **Rigid-body physics** (cannon-es) at a fixed 120 Hz step, tuned so blocks stack and stay stacked.
 - **Auto-Build**: pick a Tower, Pyramid, Wall or Staircase and the arm plans and builds it from whatever layout the blocks are in, re-grasping and re-placing when a check fails.
@@ -110,7 +110,7 @@ The site is static, so any static host works. The repo includes a GitHub Pages w
 
 **Does it run on a phone?** Yes, with a touch layout that starts in Joints mode. On a 390 x 844 screen the slider panel overlaps the top of the arm in the default view, as the phone screenshot shows.
 
-**Is this a model of a specific robot?** No. The dimensions in `src/config.js` are a generic 6-axis arm, not a real product, and nothing here is calibrated for real hardware.
+**Is this a model of a specific robot?** No. The dimensions in `src/config.js` are a generic five-joint arm with a parallel gripper, not a real product, and nothing here is calibrated for real hardware.
 
 ## Good first issues
 

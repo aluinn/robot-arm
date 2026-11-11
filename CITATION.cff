@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 title: "Robot Arm Simulator"
-abstract: "A browser-based 3D simulator of a 6-axis industrial arm with inverse kinematics, rigid-body physics, deterministic record/replay and an auto-builder."
+abstract: "A browser-based 3D simulator of an industrial-style five-joint arm with a parallel gripper, inverse kinematics, rigid-body physics, deterministic record/replay and an auto-builder."
 type: software
 authors:
   - family-names: McDonald
