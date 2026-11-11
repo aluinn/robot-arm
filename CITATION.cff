@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Robot Arm Simulator"
+abstract: "A browser-based 3D simulator of a 6-axis industrial arm with inverse kinematics, rigid-body physics, deterministic record/replay and an auto-builder."
+type: software
+authors:
+  - family-names: McDonald
+    given-names: Aluinn
+repository-code: "https://github.com/aluinn/robot-arm"
+license: MIT
+keywords:
+  - robotics
+  - inverse kinematics
+  - physics simulation
+  - three.js
+  - webgl
