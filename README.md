@@ -1,125 +1,144 @@
+<div align="center">
+
 # Robot Arm Simulator
 
-A browser-based 3D simulator of a 6-axis industrial arm with a parallel gripper, inverse kinematics, and rigid-body physics.
+**A 6-axis industrial arm in your browser: inverse kinematics, rigid-body physics, exact record/replay, and an auto-builder that stacks blocks by itself.**
 
-## Run
+[![CI](https://github.com/aluinn/robot-arm/actions/workflows/ci.yml/badge.svg)](https://github.com/aluinn/robot-arm/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/aluinn/robot-arm/actions/workflows/codeql.yml/badge.svg)](https://github.com/aluinn/robot-arm/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/aluinn/robot-arm?style=flat)](https://github.com/aluinn/robot-arm/stargazers)
+[![Deploy: GitHub Pages](https://img.shields.io/badge/deploy-GitHub%20Pages-222?logo=github)](#deploy)
 
-```sh
-npx serve
-```
+<!--
+  HERO PLACEHOLDER: replace the image below with a short screen recording (GIF or MP4) of Auto-Build
+  stacking the pyramid, e.g. docs/assets/demo.gif, then update the <img> src.
+-->
+<img src="docs/assets/screenshot-autobuild-progress.png" alt="The arm placing the fifth of six blocks while building a pyramid" width="860">
 
-Then open the printed local URL. There is no build step; Three.js and cannon-es load from a CDN through an import map (pinned versions), so you need a network connection on first load.
+[Live demo](https://aluinn.github.io/robot-arm/) · [Architecture](docs/ARCHITECTURE.md) · [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md)
 
-## Controls
+</div>
 
-| Input | Action |
+## Features
+
+- **6-axis arm with a parallel gripper**, driven from the keyboard in Cartesian mode (move the gripper target) or Joints mode (sliders per joint).
+- **Closed-form inverse kinematics** with joint limits, wrist-roll selection that never spins the long way round, and workspace-edge sliding when a target is out of reach.
+- **Rigid-body physics** (cannon-es) at a fixed 120 Hz step, tuned so blocks stack and stay stacked.
+- **Auto-Build**: pick a Tower, Pyramid, Wall or Staircase and the arm plans and builds it from whatever layout the blocks are in, re-grasping and re-placing when a check fails.
+- **Record and Autopilot**: record your inputs, replay them, scrub the timeline, change speed (0.5x to 4x). A replay is checked against the recorded end state.
+- **Challenges**: Tower of 3 and Pyramid with a translucent ghost target, timer and remembered best times.
+- **Export / import** recordings as validated JSON.
+- **Camera presets**, optional synthesized sound, clean (UI-free) mode and a touch-friendly layout.
+- **No build step**: plain ES modules, Three.js and cannon-es from a pinned CDN import map.
+
+## Screenshots
+
+| | |
 | --- | --- |
-| `W` `A` `S` `D` | Move the gripper target across the table (relative to the camera) |
-| `R` / `F` | Raise / lower the target |
-| `Q` / `E` | Rotate the wrist |
-| `Space` | Open / close the gripper |
-| `Shift` (hold) | Fine, slow movement |
-| `M` | Switch between Cartesian and Joints mode |
-| `O` | Toggle slow auto-orbit |
-| `X` | Reset the whole scene (arm and blocks) |
-| `H` | Clean mode: hide all UI |
-| `Esc` | Cancel Auto-Build |
-| `C` | Start / stop recording |
-| `P` | Autopilot (replay the recording); pause / resume while replaying |
-| `[` / `]` | Slower / faster replay (0.5×, 1×, 2×, 4×) |
-| `1` `2` `3` | Camera presets: Front, Top, Hero |
-| `K` | Sound on / off (off by default) |
-| `T` | Show / hide the replay motion trail |
-| `/` | Show / hide the controls hint |
-| Mouse | Orbit (drag), zoom (wheel) |
+| <img src="docs/assets/screenshot-overview.png" alt="Overview with all panels" width="440"><br>Overview | <img src="docs/assets/screenshot-autobuild-done.png" alt="Finished pyramid built by Auto-Build" width="440"><br>Auto-Build finished (pyramid, front view) |
+| <img src="docs/assets/screenshot-challenge.png" alt="Pyramid challenge with ghost target" width="440"><br>Challenge with ghost target | <img src="docs/assets/screenshot-joints.png" alt="Joints mode" width="440"><br>Joints mode |
 
-In **Joints** mode the panel sliders drive each joint and the gripper directly.
+<details>
+<summary>More screenshots</summary>
 
-### Feel and feedback
+| | |
+| --- | --- |
+| <img src="docs/assets/screenshot-clean.png" alt="Clean mode with the UI hidden" width="440"><br>Clean mode (`H`) | <img src="docs/assets/screenshot-phone.png" alt="Phone layout at 390 x 844" width="200"><br>Phone layout (390 x 844) |
 
-- **Easing:** keyboard motion accelerates and glides to a stop; joints and the gripper use critically damped springs.
-- **Idle breathing:** the arm sways by a few millimetres so it never looks frozen. It fades out near the table and while gripping, so it never disturbs a grab.
-- **Soft settle:** a released block is briefly extra-damped so it lands without bouncing.
-- **Block highlight:** the block that a grab would pick up gets a thin outline (strong once it is inside the grasp zone) and a brief pulse when gripped.
-- **Stats:** the left panel shows the tallest tower in millimetres, with a meter, and how many blocks are stacked.
-- **Sound:** soft synthesized clicks for grip and place (WebAudio, no files). Off until you switch it on.
-- **Camera presets:** Front, Top and Hero glide between views; dragging the camera cancels the preset.
-
-### Challenge
-
-Pick **Tower of 3** or **Pyramid** and press **Start**. The scene resets, a translucent ghost shows the target, and the timer runs. Each ghost slot turns green when a matching block sits in it (within about 35 mm, upright and at rest). Hold the full shape for a moment and you get the success card with your time. Best times are remembered. **Reset scene** during a challenge restarts it. Challenges can't be started while recording or replaying.
-
-### Auto-Build
-
-Unlike Autopilot (which replays a recording), Auto-Build **plans and carries out a task itself** from wherever the blocks currently are.
-
-Pick a structure in the **Auto-Build** card: *Tower (all 6)*, *Pyramid (3-2-1)*, *Wall (3 × 2)* or *Staircase (1-2-3)*. A translucent ghost of it appears at the build site, so you can see the target. Press **Auto-Build** to start; the arm waits a moment on the ghost, then builds from the bottom layer up. Progress shows as "Block 3 of 6" with the current step, and slots turn green as they fill. **Esc** or **Cancel** stops it at any time (the arm freezes where it is; if it is holding a block, press `Space` to set it down).
-
-For every block it:
-
-1. moves above it at a height that clears everything on the way (travelling in an arc around the base, with smooth ease-in/ease-out motion),
-2. descends slowly and pauses, closes the gripper and checks that the block really is held (retrying up to 2 more times if not),
-3. lifts, carries it above the target, descends gently, pauses, opens and backs off,
-4. waits for the block to settle and checks it against the target (within about 12 mm). If it is off, it picks the block up again and re-places it.
-
-It works from any layout, including one you rearranged by hand:
-
-- a block already in its target position is left alone;
-- blocks sitting on the build site, blocks stacked on top of the one it needs, and blocks that would stop the gripper fitting are moved aside first, to a free spot on the table;
-- the gripper rotates to the orientation that fits between neighbours, and picks whichever blocks are the right size.
-
-It uses the arm only through the same inverse kinematics as the keyboard, and the blocks are only ever moved by the gripper (nothing is teleported). Keyboard control is locked while it runs. Because it is just another controller, a build can be recorded and replayed. Limits: blocks need to be upright (a block lying on its side is not used) and within the arm's reach, and a tall pile you built by hand elsewhere is taken apart top-first as needed.
-
-### Record and Autopilot
-
-The recorder panel (top right) has everything on screen as well as on the keys above:
-
-- **Record** snapshots the full scene (every block's pose, the arm pose) and logs your inputs, then **Stop** ends it. The last recording is saved to your browser (`localStorage`) automatically. Recordings stop themselves at 5 minutes. You can't start recording while holding a block.
-- **Autopilot** resets to the recording's snapshot and replays the inputs through the same controller and physics, so the arm performs exactly what you did. The state indicator shows *Idle*, *Recording* or *Replaying*. When a replay finishes it is checked against the recorded end state and the result is shown under the controls.
-- The **timeline** scrubs the recording (it rewinds to the snapshot and fast-forwards using the same steps, so any point is exact). Dragging it pauses the replay; **Play** resumes.
-- **0.5× / 1× / 2× / 4×** (or `[` / `]`) run the same fixed physics steps, just more or fewer per frame.
-- **Trail** draws a faint line behind the gripper during replay.
-- **Reset scene** restores the default arm pose and block layout (it discards an in-progress recording).
-- **Export** / **Import** save and load the recording as JSON; imports are validated before use. **Clear** deletes the saved recording.
+</details>
 
 ## How it works
 
-**Inverse kinematics.** The arm is a base yaw followed by a planar shoulder/elbow/wrist chain. In Cartesian mode the target position gives the base yaw directly. The wrist point is then found by stepping back from the target along the tool axis, and the shoulder and elbow come from a closed-form two-link solution (elbow up). The wrist pitch keeps the gripper pointing down; if that is out of reach or out of limits, the solver tries small tilts before giving up. Wrist roll is chosen as the equivalent angle (the gripper is symmetric under 180°) nearest the current one, so it never spins the long way round. When a move is infeasible the target slides along the edge of the workspace instead of sticking. All joints respect their limits.
-
-**Motion.** Every joint, and the gripper, follows its target with a critically damped spring (with a speed cap), so motion accelerates and settles smoothly with no overshoot or snapping.
-
-**Physics.** [cannon-es](https://github.com/pmndrs/cannon-es) runs at a fixed 120 Hz timestep with a high solver iteration count, tuned friction, damping and sleep thresholds so blocks stack stably. The fingers and palm are kinematic bodies that follow the arm and carry its velocity, so they can push blocks. Because cannon-es ignores slow contacts with sleeping bodies, blocks near the tool are woken before each step.
-
-**Grasping.** When the pads close onto a block, the block is locked to the gripper frame instead of being held by friction. It eases to the centre of the grip and rotates to the nearest axis-aligned orientation, then follows the tool exactly, which avoids jitter, slipping and solver blow-ups. Opening the gripper hands the block back to the solver with the tool's velocity (capped), so it drops naturally and can be stacked.
-
-## Replay determinism
-
-Replays are exact (bit-for-bit in the same browser), not approximated. That relies on a few rules:
-
-- The simulation only advances in fixed 1/120 s steps, always in the same order: commands, then arm, then physics. Replay speed and frame rate only change how many steps run per frame.
-- Every run, whether a live recording or a replay, starts from a freshly built physics world created from the same snapshot, so there is no leftover contact or broadphase history and body ids match.
-- The controller's output (joint targets, gripper, target pose) is logged for each step, but only when it changes, and fed straight back in on replay. Blocks are never teleported.
-- Nothing in the physics uses randomness.
-
-Recordings carry a simulator version. If the arm or physics behaviour changes in a later version, older recordings are rejected with a message instead of replaying differently. Exact replay is guaranteed within one browser and machine. A different JavaScript engine may differ in floating-point details, in which case the end-of-replay check will report the divergence.
-
-## Layout
-
+```mermaid
+flowchart LR
+  K[Keyboard / sliders / Auto-Build] --> C[Controller targets]
+  C --> IK[Inverse kinematics + joint springs]
+  IK --> A[Arm pose]
+  A -->|kinematic fingers| P[cannon-es physics, 120 Hz]
+  P --> R[Three.js render]
+  C -.logged per step.-> REC[Recorder]
+  REC -.replayed as the same inputs.-> C
 ```
-index.html        page + import map
-css/style.css     UI styling
-src/main.js       setup and main loop
-src/config.js     dimensions, joint limits, palette
-src/scene.js      renderer, lighting, environment, floor, camera
-src/arm.js        arm model, IK, joint dynamics
-src/physics.js    physics world, blocks, grasping, highlight query
-src/stacks.js     tower height and stacked-block detection
-src/challenge.js  ghost targets, timer, success detection
-src/autobuild.js  Auto-Build planner and executor
-src/structures.js Auto-Build target structures
-src/ghost.js      translucent target renderer
-src/audio.js      synthesized sounds
-src/input.js      keyboard handling
-src/ui.js         panels, toolbar, cards, hints
-src/recorder.js   scene snapshots, record/replay, import/export validation
+
+1. **Targets in, joint angles out.** Input (or the Auto-Build planner) moves a target pose. A closed-form solver turns it into joint angles; every joint follows its target with a critically damped spring.
+2. **Fixed-step physics.** The simulation only advances in 1/120 s steps, always in the order commands, arm, physics. Frame rate only changes how many steps run per frame.
+3. **Grasping is a lock, not friction.** When the pads close on a block it is locked to the gripper frame, which avoids jitter and slipping. Opening hands it back to the solver with the tool's velocity.
+4. **Replays re-run the same inputs.** The recorder logs controller outputs only when they change and feeds them back into a freshly built physics world. Nothing is teleported.
+
+More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Controls and feature reference: [docs/USAGE.md](docs/USAGE.md).
+
+## Quick start
+
+Requires Node 20+ for the dev server and tooling (the app itself runs in any modern browser with WebGL).
+
+```sh
+git clone https://github.com/aluinn/robot-arm.git
+cd robot-arm
+npm install        # dev tooling only; the app has no runtime dependencies
+npm start          # http://localhost:3000
 ```
+
+Open the printed URL. You need a network connection on first load, because Three.js and cannon-es come from a CDN.
+
+| Command | What it does |
+| --- | --- |
+| `npm start` | Static dev server (`scripts/serve.mjs`), port 3000 or `PORT` |
+| `npm test` | Unit tests (`node --test`) |
+| `npm run test:e2e` | Playwright end-to-end smoke test |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | TypeScript `checkJs` over `src/` |
+| `npm run build` | Copy the static site to `dist/` and verify it |
+| `npm run screenshots` | Regenerate `docs/assets/screenshot-*.png` |
+| `npm run bench` | Measure simulation step cost, see [PERFORMANCE](docs/PERFORMANCE.md) |
+
+Add `?debug` to the URL to expose `window.__app` (arm, physics, actions) for scripting and tests.
+
+## Deploy
+
+The site is static, so any static host works. The repo includes a GitHub Pages workflow (`.github/workflows/pages.yml`): in **Settings > Pages**, set **Source** to **GitHub Actions**, and every push to `main` publishes to `https://aluinn.github.io/robot-arm/`.
+
+## FAQ
+
+**Does it work offline?** Not out of the box. Three.js and cannon-es load from jsDelivr through an import map. Vendoring them is a [good first issue](docs/issues/09-vendor-dependencies-offline.md).
+
+**Are replays really exact?** Bit-for-bit in the same browser on the same machine. A different JavaScript engine may differ in floating-point details, in which case the end-of-replay check reports the divergence. Recordings carry a simulator version and are rejected if it does not match.
+
+**Which browsers are tested?** Development and the automated screenshots and tests use Chrome. Other WebGL-capable browsers should work but have not been verified.
+
+**Can Auto-Build use any layout?** Almost. Blocks must be upright (a block on its side is not used) and within the arm's reach. See [Auto-Build](docs/USAGE.md#auto-build) for the details.
+
+**Does it run on a phone?** Yes, with a touch layout that starts in Joints mode. On a 390 x 844 screen the slider panel overlaps the top of the arm in the default view, as the phone screenshot shows.
+
+**Is this a model of a specific robot?** No. The dimensions in `src/config.js` are a generic 6-axis arm, not a real product, and nothing here is calibrated for real hardware.
+
+## Good first issues
+
+Drafts are in [docs/issues](docs/issues); copy one into a GitHub issue to start.
+
+| Issue draft | Label |
+| --- | --- |
+| [Add a new Auto-Build structure](docs/issues/01-add-autobuild-structure.md) | good first issue |
+| [Add more challenge shapes](docs/issues/02-add-challenge-shapes.md) | good first issue |
+| [Add page metadata and a social preview](docs/issues/03-page-metadata-social-preview.md) | good first issue |
+| [Remember UI preferences](docs/issues/04-persist-ui-preferences.md) | good first issue |
+| [Accessible labels for controls](docs/issues/05-accessible-controls.md) | good first issue |
+| [Gamepad input](docs/issues/06-gamepad-input.md) | enhancement |
+| [Elbow-down IK solution](docs/issues/07-elbow-down-ik.md) | enhancement |
+| [Auto-Build with blocks lying on their side](docs/issues/08-autobuild-lying-blocks.md) | enhancement |
+| [Vendor dependencies for offline use](docs/issues/09-vendor-dependencies-offline.md) | enhancement |
+| [Drag the target on touch screens](docs/issues/10-touch-drag-target.md) | enhancement |
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md).
+
+## Credits
+
+- [Three.js](https://threejs.org/) for rendering (MIT), loaded from [jsDelivr](https://www.jsdelivr.com/).
+- [cannon-es](https://github.com/pmndrs/cannon-es) for rigid-body physics (MIT).
+- Built by [Aluinn McDonald](https://github.com/aluinn), with help from [Claude Code](https://claude.com/claude-code).
+
+## License
+
+[MIT](LICENSE) © Aluinn McDonald
