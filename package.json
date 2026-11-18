@@ -29,10 +29,10 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "^1.65.0",
-    "@types/three": "^0.170.0",
+    "@playwright/test": "^1.65.1",
+    "@types/three": "^0.187.0",
     "cannon-es": "^0.20.0",
-    "eslint": "^10.14.0",
+    "eslint": "^10.15.0",
     "globals": "^17.14.0",
     "typescript": "^7.0.2"
   }
